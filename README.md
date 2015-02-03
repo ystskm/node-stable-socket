@@ -1,64 +1,36 @@
-# mock-promise
+# stable-socket
   
-[![Version](https://badge.fury.io/js/mock-promise.png)](https://npmjs.org/package/mock-promise)
-[![Build status](https://travis-ci.org/ystskm/mock-promise-js.png)](https://travis-ci.org/ystskm/mock-promise-js)  
+[![Version](https://badge.fury.io/js/stable-socket.png)](https://npmjs.org/package/stable-socket)
+[![Build status](https://travis-ci.org/ystskm/stable-socket-js.png)](https://travis-ci.org/ystskm/stable-socket-js)  
   
 
 ## Install
 
 Install with [npm](http://npmjs.org/):
 
-    npm install mock-promise
+    npm install stable-socket
     
 ## API - Set functions by args
 
 ```js
-    new Promise(function(res, rej) {
-      res('x');
-    }).chain(function() {
-      return new Promise(function(res, rej) {
-        res('y');
-      });
-    }).then(function(r) {
-      console.log('All promise has done.(' + r + ')');
-    }, function() {
-      console.log('Something failed...');
-    }); // => 'All promise has done.(y)'
+    var socket = new StableSocket(require('websockets').WebSocket, 
+      ['http://localhost:8000/', 'http://localhost:8001/']
+      {});
+    socket.onopen = function() { console.log('Socket opened!') };
+    // => 'Socket opened!'
 ```
 
 ### also use on browser
 
 ```html
-<script type="text/javascript" src="MockPromise.js"></script>
+<script type="text/javascript" src="StableSocket.js"></script>
 <script type="text/javascript">
 
-    new Promise(function(res, rej) {
-      res('x');
-    }).chain(function() {
-      return new Promise(function(res, rej) {
-        res('y');
-      });
-    }).then(function(r) {
-      console.log('All promise has done.(' + r + ')');
-    }, function() {
-      console.log('Something failed...');
-    }); // => 'All promise has done.(y)'
+    var socket = new StableSocket(WebSocket, 
+      ['http://localhost:8000/', 'http://localhost:8001/']
+      {});
+    socket.onopen = function() { console.log('Socket opened!') };
+    // => 'Socket opened!'
 
 </script>
-```
-
-## if you want to inherit Emitter to another *class*, use prototype chain.
-
-```js
-    // for Factory
-    var SubClass = function(){
-      NoleakEmitter.call(this);
-    }
-    for(var i in NoleakEmitter.prototype)
-      SubClass.prototype[i] = NoleakEmitter.prototype[i];
-
-    // for Singleton (not recommended)
-    var SubClass = function(){
-      this.__proto__.__proto__ = new NoleakEmitter();
-    }
 ```
