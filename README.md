@@ -10,7 +10,7 @@ Install with [npm](http://npmjs.org/):
 
     npm install stable-socket
     
-## API - Set functions by args
+## API - Set WebSocket, candidate hosts and options
 
 ```js
     var socket = new StableSocket(require('websockets').WebSocket, 
