@@ -17,6 +17,7 @@ Install with [npm](http://npmjs.org/):
       ['http://localhost:8000/', 'http://localhost:8001/']
       {});
     socket.onopen = function() { console.log('Socket opened!') };
+    socket.send('Hello!');
     // => 'Socket opened!'
 ```
 
@@ -30,6 +31,7 @@ Install with [npm](http://npmjs.org/):
       ['http://localhost:8000/', 'http://localhost:8001/']
       {});
     socket.onopen = function() { console.log('Socket opened!') };
+    socket.send('Hello!');
     // => 'Socket opened!'
 
 </script>
