@@ -19,15 +19,19 @@
   /**
    * @constructor
    */
-  function StableSocket(WebSocket, candidates, opts) {
+  function StableSocket(WebSocket, candidates, options) {
+
+    if(!(this instanceof StableSocket))
+      return new StableSocket(WebSocket, candidates, options)
 
     var ss = this;
 
     ss._Socket = WebSocket;
     ss._actors = candidates;
 
-    ss.options = opts;
+    var opts = ss.options = options;
     ss.logger = opts.logger ? opts.logger: console;
+    opts.timeout = opts.timeout || Timeout.Request;
 
     ss._index = 0, ss._conn = null, ss._waits = [];
     ss.onopen = ss.onmessage = ss.onerror = ss.onclose = Function();
@@ -111,6 +115,20 @@
 
     }
 
+    function onMessage(m) {
+      try {
+
+        ss.onmessage(m);
+
+      } catch(e) {
+
+        logger.error('Error occurs on message.');
+        logger.error(e, 'recieved message: ', m);
+        ss.onerror(e)
+
+      }
+    }
+
     function onClose() {
 
       var msg = 'WebSocket Connection is CLOSED. ';
@@ -140,7 +158,7 @@
 
     if(typeof args[args.length - 1] == 'function') {
       callback = _callbacks[rid] = args[args.length - 1];
-      _timers[rid] = setTimeout(timeout, Timeout.Request);
+      _timers[rid] = setTimeout(timeout, opts.timeout);
     }
 
     if(ss._conn == null) {
@@ -176,7 +194,9 @@
     }
 
     function write() {
-      ss._conn.send(opts.sender(rid));
+      var conv = typeof opts.converter == 'function' && opts.converter;
+      var mess = conv ? conv.apply(ss, [rid].concat(args)): String(args[0]);
+      ss._conn.send(mess);
     }
 
     function timeout() {
@@ -189,20 +209,6 @@
 
       ss._conn = null, ss._index++;
       ss.send.apply(ss, args);
-
-    }
-  }
-
-  function onMessage(m) {
-    try {
-
-      ss.onmessage(m);
-
-    } catch(e) {
-
-      logger.error('Error occurs on message.');
-      logger.error(e, 'recieved message: ', m);
-      ss.onerror(e)
 
     }
   }
