@@ -13,6 +13,16 @@
     Request: 8000
   };
 
+  var Converter = function(rid, obj) {
+    return JSON.stringify([{
+      rid: rid
+    }, obj]);
+  };
+
+  var Analyzer = function(msg) {
+    return JSON.parse(msg);
+  };
+
   var _rid = 0, _timers = {}, _callbacks = {};
   var _connector = {};
 
@@ -22,14 +32,14 @@
   function StableSocket(WebSocket, candidates, options) {
 
     if(!(this instanceof StableSocket))
-      return new StableSocket(WebSocket, candidates, options)
+      return new StableSocket(WebSocket, candidates, options);
 
     var ss = this;
 
     ss._Socket = WebSocket;
     ss._actors = candidates;
 
-    var opts = ss.options = options;
+    var opts = ss.options = options || {};
     ss.logger = opts.logger ? opts.logger: console;
     opts.timeout = opts.timeout || Timeout.Request;
 
@@ -75,10 +85,18 @@
 
     ws.onopen = onOpen;
     ws.onmessage = onMessage;
-    ws.onerror = onOpeningError;
-    ws.onclose = onClose;
+
+    ws.onerror = function(e) {
+      onOpeningError(e);
+    };
+    ws.onclose = function(e) {
+      onClose(e);
+    };
 
     function onOpen() {
+
+      // off opening error.
+      onOpeningError = Function();
 
       // when open socket, assign as his own socket.
       // (by readyState judge, occasionally not better.)
@@ -118,13 +136,18 @@
     function onMessage(m) {
       try {
 
-        ss.onmessage(m);
+        var data = (opts.analyzer || Analyzer)(m);
+        var h = data[0], b = data[1], rid = h.rid;
+        (_callbacks[rid] || Function())(b), _reset(rid);
+
+        // get raw message for.
+        ss.onmessage(data);
 
       } catch(e) {
 
         logger.error('Error occurs on message.');
         logger.error(e, 'recieved message: ', m);
-        ss.onerror(e)
+        ss.onerror(e);
 
       }
     }
@@ -194,8 +217,8 @@
     }
 
     function write() {
-      var conv = typeof opts.converter == 'function' && opts.converter;
-      var mess = conv ? conv.apply(ss, [rid].concat(args)): String(args[0]);
+      var conv = (opts.converter || Converter);
+      var mess = conv.apply(ss, [rid].concat(args));
       ss._conn.send(mess);
     }
 
@@ -220,4 +243,4 @@
     clearTimeout(_timers[rid]), delete _timers[rid], delete _callbacks[rid];
   }
 
-})(typeof window != 'undefined', typeof module != 'undefined')
+})(typeof window != 'undefined', typeof module != 'undefined');
