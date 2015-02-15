@@ -9,14 +9,20 @@
   /**
    * 
    */
+  var Default = {
+    OpenRetryTime: 5,
+    OpenRetryInterval: 1000,
+    SilentTerm: 60 * 60 * 1000
+  };
+
   var Timeout = {
     Request: 8000
   };
 
   var Converter = function(rid, obj) {
-    return JSON.stringify([{
+    return [{
       rid: rid
-    }, obj]);
+    }, obj];
   };
 
   var Analyzer = function(msg) {
@@ -29,14 +35,14 @@
   /**
    * @constructor
    */
-  function StableSocket(WebSocket, candidates, options) {
+  function StableSocket(Socket, candidates, options) {
 
     if(!(this instanceof StableSocket))
-      return new StableSocket(WebSocket, candidates, options);
+      return new StableSocket(Socket, candidates, options);
 
     var ss = this;
 
-    ss._Socket = WebSocket;
+    ss._Socket = Socket;
     ss._actors = candidates;
 
     var opts = ss.options = options || {};
@@ -50,6 +56,7 @@
 
   var SSProtos = {
     connect: connect,
+    status: status,
     send: send
   };
   for( var i in SSProtos)
@@ -60,7 +67,7 @@
    */
   function connect(rid) {
 
-    var ss = this, WebSocket = ss._Socket;
+    var ss = this, Socket = ss._Socket;
     var logger = ss.logger, opts = ss.options;
     var _waits = ss._waits;
 
@@ -80,17 +87,32 @@
       return;
     }
 
-    var ws = new WebSocket(ConnectURI + (opts.query || ''));
+    var so = new Socket(ConnectURI + (opts.query || ''), {
+      rejectUnauthorized: false
+    });
+
+    ss._host = ConnectURI.split('/').slice(0, 3).join('/');
     ss._conn = true; // on connecting sign
 
-    ws.onopen = onOpen;
-    ws.onmessage = onMessage;
+    // retry status when OpenError occurs.
+    var opts_retry = opts.retry || '';
+    ss._open_retry0 = opts_retry.time || Default.OpenRetryTime;
+    ss._open_retryi = opts_retry.interval || Default.OpenRetryInterval;
 
-    ws.onerror = function(e) {
-      onOpeningError(e);
+    ss._open_retry = ss._open_retry0;
+    ss._open_error = null;
+
+    ss._slient_term = opts_retry.silent || Default.SilentTerm;
+    ss._slient_timer = null;
+
+    so.onopen = onOpen;
+    so.onmessage = onMessage;
+
+    so.onerror = function(e) {
+      onOpeningError(e), so.close();
     };
-    ws.onclose = function(e) {
-      onClose(e);
+    so.onclose = function(e) {
+      !ss._open_error && onClose(e);
     };
 
     function onOpen() {
@@ -100,9 +122,9 @@
 
       // when open socket, assign as his own socket.
       // (by readyState judge, occasionally not better.)
-      ss.onopen.call(ss, _connector[ConnectURI] = ss._conn = ws);
+      ss.onopen.call(ss, _connector[ConnectURI] = ss._conn = so);
 
-      var msg = 'WebSocket Connection is OPEN. ';
+      var msg = 'StableSocket Connection is OPEN. ';
       logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length);
       _reset(rid);
 
@@ -112,14 +134,33 @@
       while(waits.length)
         ss.send.apply(ss, waits.shift());
 
+      // refresh open error status
+      ss._open_error = null;
+      ss._open_retry = ss._open_retry0;
+
     }
 
     function onOpeningError(e) {
 
-      var msg = 'WebSocket Connection is ERROR. ';
+      var msg = 'StableSocket Connection is ERRORED. ';
       logger.log(msg + '(' + (conf && conf.ConnectURI) + ') waiting: '
         + _waits.length);
-      _reset(rid);
+
+      // if reconnecting, wait more error
+      // until sleeping mode
+      if(--ss._open_retry > 0) {
+        setTimeout(function() {
+          ss.connect(rid)
+        }, ss._open_retryi);
+        return;
+      }
+
+      _reset(rid)
+
+      ss._open_error = {
+        error: e,
+        stamp: new Date()
+      };
 
       var waits = _waits;
       ss._waits = [];
@@ -129,32 +170,53 @@
         typeof cb == 'function' ? cb(e): logger.log('Delete request: ', wait);
       }
 
-      ss.onerror.call(ss, e);
+      if(!ss._silent_term)
+        ss.onerror.call(ss, e);
+
+      var term = ss._silent_term;
+      if(typeof term == 'function')
+        term = term();
+
+      if(typeof term != 'number')
+        return;
+
+      ss._silent_timer = setTimeout(function() {
+
+        // sign of mode change
+        delete ss._silent_timer;
+
+        // parameter initialize
+        ss._open_error = null;
+        ss._open_retry = ss._open_retry0;
+
+      }, term);
 
     }
 
     function onMessage(m) {
       try {
 
-        var data = (opts.analyzer || Analyzer)(m);
-        var h = data[0], b = data[1], rid = h.rid;
+        // data analyzed by analyzer.
+        var data = (opts.analyzer || Analyzer)(m) || '';
+
+        // and callback if exist.
+        var h = data[0] || '', b = data[1] || '', rid = h.rid;
         (_callbacks[rid] || Function())(b), _reset(rid);
 
-        // get raw message for.
-        ss.onmessage(data);
+        // get raw message.
+        ss.onmessage(m);
 
       } catch(e) {
 
-        logger.error('Error occurs on message.');
-        logger.error(e, 'recieved message: ', m);
-        ss.onerror(e);
+        // get raw message. (unparsable)
+        ss.onmessage(m, false);
 
       }
     }
 
     function onClose() {
 
-      var msg = 'WebSocket Connection is CLOSED. ';
+      var msg = 'StableSocket Connection is CLOSED. ';
       var ConnectURI = (conf || '').ConnectURI;
 
       logger.log(msg + '(' + ConnectURI + ')');
@@ -166,19 +228,31 @@
 
   }
 
+  function status() {
+    var ss = this;
+    return (ss._conn || '').readyState;
+  }
+
   /**
    * @prototype
    */
   function send() {
 
-    var ss = this, WebSocket = ss._Socket;
+    var ss = this, Socket = ss._Socket;
     var logger = ss.logger, opts = ss.options;
     var _waits = ss._waits;
 
-    var rid = ++_rid & 0xffffff;
     var args = Array.prototype.slice.call(arguments);
     var callback;
 
+    // at the silent mode, "send" method immediately end.
+    if(ss._silent_timer) {
+      callback = args[args.length - 1];
+      typeof callback == 'function' && callback();
+      return;
+    }
+
+    var rid = ++_rid & 0xffffff;
     if(typeof args[args.length - 1] == 'function') {
       callback = _callbacks[rid] = args[args.length - 1];
       _timers[rid] = setTimeout(timeout, opts.timeout);
@@ -195,18 +269,18 @@
     }
 
     switch(ss._conn.readyState) {
-    case WebSocket.OPEN:
+    case Socket.OPEN:
       return write();
 
-    case WebSocket.CONNECTING:
+    case Socket.CONNECTING:
       _waits.push(args);
       return;
 
-    case WebSocket.CLOSING:
+    case Socket.CLOSING:
       _waits.push(args), ss._index++;
       return ss.connect(rid);
 
-    case WebSocket.CLOSED:
+    case Socket.CLOSED:
       _waits.push(args), ss._index++;
       return ss.connect(rid);
 
@@ -217,9 +291,84 @@
     }
 
     function write() {
+
       var conv = (opts.converter || Converter);
-      var mess = conv.apply(ss, [rid].concat(args));
-      ss._conn.send(mess);
+      var rurl, mess;
+
+      if(typeof args[0] == 'string') {
+        mess = args[0];
+      } else {
+        mess = conv.apply(ss, [rid].concat(args));
+      }
+
+      if(ss._conn.send) {
+        // type: WebSocket
+        ss._conn.send(typeof mess == 'string' ? mess: JSON.stringify(mess));
+      } else {
+        // type: EventSource
+        (typeof process == 'undefined' ? xmlPost: nodePost)(mess);
+      }
+
+    }
+
+    function nodePost(mess) {
+
+      var host = ss._host, body = mess[1];
+      var prtc = host.indexOf('https') === 0 ? 'https': 'http';
+
+      var headers = body.headers || {};
+      headers['Content-Type'] = 'application/json';
+
+      var options = {
+        hostname: host.replace(prtc + '://', ''),
+        path: body.url,
+        method: 'POST',
+        headers: headers,
+        rejectUnauthorized: false
+      };
+
+      //      console.log('MESSAGE!', mess, options);
+
+      delete body.url, delete body.headers;
+      var r = require(prtc).request(options, function(res) {
+        //        console.log('nodePost returns.', res.statusCode);
+        // TODO
+        // res.statusCode == 200 ? dfd.resolve(): dfd.reject();
+      });
+
+      r.on('error', ss.onerror.bind(ss));
+      r.write(JSON.stringify(mess));
+      r.end();
+
+    }
+
+    function xmlPost(mess) {
+
+      var k, xhr = new XMLHttpRequest(), body = mess[1];
+      xhr.open('POST', body.url, true);
+
+      var headers = body.headers || {};
+      headers['Content-Type'] = 'application/json';
+
+      xhr.withCredentials = true;
+      for(k in headers)
+        xhr.setRequestHeader(k, heaaders[k]);
+
+      xhr.addEventListener('readystatechange', function() {
+        //        console.log('xmlPost returns.', xhr.status);
+        switch(xhr.readyState) {
+        case 4:
+          // TODO
+          // xhr.status == 200 ? dfd.resolve(): dfd.reject();
+        }
+      });
+
+      xhr.addEventListener('error', onerror);
+      xhr.addEventListener('abort', onerror);
+
+      delete body.url, delete body.headers;
+      xhr.send(JSON.stringify(mess));
+
     }
 
     function timeout() {
@@ -234,6 +383,7 @@
       ss.send.apply(ss, args);
 
     }
+
   }
 
   /**
