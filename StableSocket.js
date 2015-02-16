@@ -72,7 +72,7 @@
     var _waits = ss._waits;
 
     var conf = ss._actors[ss._index];
-    !conf && (conf = ss._actors[ss._index = 0]);
+    conf || (conf = ss._actors[ss._index = 0]);
 
     if(conf == null) {
       onOpeningError(new Error('Actor for connect is not found.'));
@@ -82,9 +82,12 @@
     }
 
     var ConnectURI = conf.ConnectURI;
+
     if(_connector[ConnectURI] != null) {
-      onOpeningError(new Error('Duplicated connect call.'));
-      return;
+      // reconnecting warning
+      console.log('[StableSocket] ' + new Date().toGMTString() + ' - ');
+      console.log('Overwrite connector before close for: ' + ConnectURI);
+      onClose();
     }
 
     var so = new Socket(ConnectURI + (opts.query || ''), {
@@ -98,10 +101,9 @@
     var opts_retry = opts.retry || '';
     ss._open_retry0 = opts_retry.time || Default.OpenRetryTime;
     ss._open_retryi = opts_retry.interval || Default.OpenRetryInterval;
+    _initRetry(ss);
 
-    ss._open_retry = ss._open_retry0;
-    ss._open_error = null;
-
+    // silent circumstances
     ss._slient_term = opts_retry.silent || Default.SilentTerm;
     ss._slient_timer = null;
 
@@ -109,10 +111,10 @@
     so.onmessage = onMessage;
 
     so.onerror = function(e) {
-      onOpeningError(e), so.close();
+      onOpeningError(e), so.close(); // close to stop reconnecting
     };
     so.onclose = function(e) {
-      !ss._open_error && onClose(e);
+      ss._open_error || onClose(e);
     };
 
     function onOpen() {
@@ -135,8 +137,7 @@
         ss.send.apply(ss, waits.shift());
 
       // refresh open error status
-      ss._open_error = null;
-      ss._open_retry = ss._open_retry0;
+      _initRetry(ss);
 
     }
 
@@ -145,15 +146,23 @@
       var msg = 'StableSocket Connection is ERRORED. ';
       logger.log(msg + '(' + (conf && conf.ConnectURI) + ') waiting: '
         + _waits.length);
+      console.error(e);
 
       // if reconnecting, wait more error
       // until sleeping mode
-      if(--ss._open_retry > 0) {
-        setTimeout(function() {
-          ss.connect(rid)
-        }, ss._open_retryi);
-        return;
-      }
+      if(--ss._open_retry > 0 && typeof ss._open_retrya[0] == 'number')
+        return setTimeout(function() {
+          ss.connect(rid);
+        }, ss._open_retrya[0]);
+
+      // ss._open_retry == 0
+      ss._open_retry = ss._open_retry0;
+      ss._open_retrya.shift();
+
+      if(ss._open_retrya.length)
+        return setTimeout(function() {
+          ss.connect(rid);
+        }, ss._open_retrya[0]);
 
       _reset(rid)
 
@@ -165,8 +174,9 @@
       var waits = _waits;
       ss._waits = [];
 
+      var wait, cb;
       while(waits.length) {
-        var wait = waits.shift(), cb = wait.pop();
+        wait = waits.shift(), cb = wait.pop();
         typeof cb == 'function' ? cb(e): logger.log('Delete request: ', wait);
       }
 
@@ -176,7 +186,6 @@
       var term = ss._silent_term;
       if(typeof term == 'function')
         term = term();
-
       if(typeof term != 'number')
         return;
 
@@ -186,18 +195,24 @@
         delete ss._silent_timer;
 
         // parameter initialize
-        ss._open_error = null;
-        ss._open_retry = ss._open_retry0;
+        _initRetry(ss);
 
       }, term);
 
     }
 
     function onMessage(m) {
+
+      //      console.log('[StableSocket] (' + ss._host + ') onMessage: ');
+      //      console.log(m);
+
       try {
 
         // data analyzed by analyzer.
-        var data = (opts.analyzer || Analyzer)(m) || '';
+        // WebSocket => raw message 
+        // EventSource => wrapped event object
+        var raw = ss._host.indexOf('ws') == 0 ? m: m.data;
+        var data = (opts.analyzer || Analyzer)(raw) || '';
 
         // and callback if exist.
         var h = data[0] || '', b = data[1] || '', rid = h.rid;
@@ -243,19 +258,21 @@
     var _waits = ss._waits;
 
     var args = Array.prototype.slice.call(arguments);
-    var callback;
+    var callback = args[args.length - 1];
+    typeof callback == 'function' || (callback = null);
 
     // at the silent mode, "send" method immediately end.
+    // in this case, all commands are disposed.
     if(ss._silent_timer) {
-      callback = args[args.length - 1];
-      typeof callback == 'function' && callback();
-      return;
+      return (callback || Function)();
     }
 
+    // request identifier
     var rid = ++_rid & 0xffffff;
-    if(typeof args[args.length - 1] == 'function') {
-      callback = _callbacks[rid] = args[args.length - 1];
+
+    if(callback) {
       _timers[rid] = setTimeout(timeout, opts.timeout);
+      _callbacks[rid] = callback
     }
 
     if(ss._conn == null) {
@@ -267,6 +284,9 @@
       _waits.push(args);
       return;
     }
+
+    //    console.log('send.readyState: ' + ss._conn.readyState, args);
+    //    console.log(Socket.OPEN, Socket.CONNECTING, Socket.CLOSING, Socket.CLOSED);
 
     switch(ss._conn.readyState) {
     case Socket.OPEN:
@@ -331,9 +351,21 @@
 
       delete body.url, delete body.headers;
       var r = require(prtc).request(options, function(res) {
-        //        console.log('nodePost returns.', res.statusCode);
+
+        // debuglog
+        //        console.log('nodePost returns for: ', options.path);
+        //        console.log(res.statusCode, body);
+        //
+        //        res.on('data', function(buf) {
+        //          console.log('nodePost.data: ' + buf.toString());
+        //        });
+        //        res.on('end', function() {
+        //          console.log('nodePost.end.');
+        //        });
+
         // TODO
         // res.statusCode == 200 ? dfd.resolve(): dfd.reject();
+
       });
 
       r.on('error', ss.onerror.bind(ss));
@@ -384,6 +416,15 @@
 
     }
 
+  }
+
+  /**
+   * @private
+   */
+  function _initRetry(ss) {
+    ss._open_error = null;
+    ss._open_retry = ss._open_retry0;
+    ss._open_retrya = [].concat(ss._open_retryi);
   }
 
   /**
