@@ -57,7 +57,8 @@
   var SSProtos = {
     connect: connect,
     status: status,
-    send: send
+    send: send,
+    close: close
   };
   for( var i in SSProtos)
     StableSocket.prototype[i] = SSProtos[i];
@@ -146,6 +147,7 @@
       var msg = 'StableSocket Connection is ERRORED. ';
       logger.log(msg + '(' + (conf && conf.ConnectURI) + ') waiting: '
         + _waits.length);
+      ss._conn === true && delete ss._conn;
       console.error(e);
 
       // if reconnecting, wait more error
@@ -164,7 +166,7 @@
           ss.connect(rid);
         }, ss._open_retrya[0]);
 
-      _reset(rid)
+      _reset(rid);
 
       ss._open_error = {
         error: e,
@@ -202,10 +204,8 @@
     }
 
     function onMessage(m) {
-
       //      console.log('[StableSocket] (' + ss._host + ') onMessage: ');
       //      console.log(m);
-
       try {
 
         // data analyzed by analyzer.
@@ -235,8 +235,17 @@
       var ConnectURI = (conf || '').ConnectURI;
 
       logger.log(msg + '(' + ConnectURI + ')');
-      delete _connector[ConnectURI];
 
+      var so = _connector[ConnectURI] || '';
+      if(so.readyState != Socket.CLOSED)
+        try {
+          logger.log('Unexpected readyState: ' + so.readyState);
+          so.close();
+        } catch(e) {
+          logger.log('Closing error: ' + e.message);
+        }
+
+      delete _connector[ConnectURI];
       ss.onclose.call(ss);
 
     }
@@ -272,7 +281,7 @@
 
     if(callback) {
       _timers[rid] = setTimeout(timeout, opts.timeout);
-      _callbacks[rid] = callback
+      _callbacks[rid] = callback;
     }
 
     if(ss._conn == null) {
@@ -416,6 +425,17 @@
 
     }
 
+  }
+
+  function close() {
+    var ss = this, _conn = ss._conn;
+    try {
+      ss._conn = null;
+      _conn.close();
+    } catch(e) {
+      console.log(new Date() + ' - ');
+      console.log('[StableSocket] close error.', e);
+    }
   }
 
   /**
