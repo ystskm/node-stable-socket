@@ -236,17 +236,21 @@
 
       logger.log(msg + '(' + ConnectURI + ')');
 
-      var so = _connector[ConnectURI] || '';
-      if(so.readyState != Socket.CLOSED)
-        try {
-          logger.log('Unexpected readyState: ' + so.readyState);
-          so.close();
-        } catch(e) {
-          logger.log('Closing error: ' + e.message);
-        }
+      var so = _connector[ConnectURI];
+      if(so) {
 
-      delete _connector[ConnectURI];
-      ss.onclose.call(ss);
+        if(so.readyState != Socket.CLOSED)
+          try {
+            logger.log('Unexpected readyState: ' + so.readyState);
+            so.close();
+          } catch(e) {
+            logger.log('Closing error: ' + e.message);
+          }
+
+        delete _connector[ConnectURI];
+        ss.onclose.call(ss);
+
+      }
 
     }
 

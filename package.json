@@ -1,6 +1,6 @@
 {
   "name": "stable-socket",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "author": {
     "name": "Yoshitaka Sakamoto",
     "url": "http://github.com/ystskm",
@@ -14,7 +14,7 @@
     "nodeunit": "*",
     "nodeunit-ci": "*"
   },
-  "keywords": ["util","WebSocket"],
+  "keywords": ["util","WebSocket","EventSource"],
   "main": "StableSocket.js",
   "repository": {
     "url": "http://github.com/ystskm/stable-socket-js",
