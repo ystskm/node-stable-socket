@@ -145,8 +145,8 @@
     function onOpeningError(e) {
 
       var msg = 'StableSocket Connection is ERRORED. ';
-      logger.log(msg + '(' + (conf && conf.ConnectURI) + ') waiting: '
-        + _waits.length);
+      logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length);
+
       ss._conn === true && delete ss._conn;
       console.error(e);
 
