@@ -2,17 +2,34 @@
 // StableSocket
 (function(has_win, has_mod) {
 
+  var exports;
+  if(has_win) {
+    // browser, emulated window
+    exports = window;
+  } else {
+    // raw Node.js, web-worker
+    exports = typeof self == 'undefined' ? this: self;
+  }
+
   // exports
-  has_win && (window.StableSocket = StableSocket);
-  has_mod && (module.exports = StableSocket);
+  exports.StableSocket = StableSocket;
+
+  // module.exports (require)
+  !has_mod || (module.exports = StableSocket);
 
   /**
    * 
    */
   var Default = {
+
     OpenRetryTime: 5,
     OpenRetryInterval: 1000,
+
+    DNSLookupTimeout: 10000,
+    DNSLookupInterval: 60000,
+
     SilentTerm: 60 * 60 * 1000
+
   };
 
   var Timeout = {
@@ -29,8 +46,13 @@
     return JSON.parse(msg);
   };
 
+  var browsing = typeof process == 'undefined';
   var _rid = 0, _timers = {}, _callbacks = {};
   var _connector = {};
+
+  // necessary for DNS lookup
+  var Sockets = StableSocket.Sockets = [];
+  StableSocket.LookupTimer = null;
 
   /**
    * @constructor
@@ -52,13 +74,21 @@
     ss._index = 0, ss._conn = null, ss._waits = [];
     ss.onopen = ss.onmessage = ss.onerror = ss.onclose = Function();
 
+    Sockets.push(ss);
+
+    // kick lookup checker if not exists
+    if(opts.lookup_check !== false && StableSocket.LookupTimer == null)
+      DNSInterval(opts);
+
   }
 
   var SSProtos = {
     connect: connect,
     status: status,
     send: send,
-    close: close
+    close: close,
+    toSilentMode: toSilentMode,
+    toAcitveMode: toAcitveMode
   };
   for( var i in SSProtos)
     StableSocket.prototype[i] = SSProtos[i];
@@ -105,8 +135,8 @@
     _initRetry(ss);
 
     // silent circumstances
-    ss._slient_term = opts_retry.silent || Default.SilentTerm;
-    ss._slient_timer = null;
+    ss._silent_term = opts_retry.silent || Default.SilentTerm;
+    ss._silent_timer = null;
 
     so.onopen = onOpen;
     so.onmessage = onMessage;
@@ -119,6 +149,10 @@
     };
 
     function onOpen() {
+
+      if(ss._silent_timer) {
+        return;
+      }
 
       // off opening error.
       onOpeningError = Function();
@@ -143,6 +177,10 @@
     }
 
     function onOpeningError(e) {
+
+      if(ss._silent_timer) {
+        return;
+      }
 
       var msg = 'StableSocket Connection is ERRORED. ';
       logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length);
@@ -182,28 +220,17 @@
         typeof cb == 'function' ? cb(e): logger.log('Delete request: ', wait);
       }
 
-      if(!ss._silent_term)
-        ss.onerror.call(ss, e);
-
-      var term = ss._silent_term;
-      if(typeof term == 'function')
-        term = term();
-      if(typeof term != 'number')
-        return;
-
-      ss._silent_timer = setTimeout(function() {
-
-        // sign of mode change
-        delete ss._silent_timer;
-
-        // parameter initialize
-        _initRetry(ss);
-
-      }, term);
+      ss.onerror.call(ss, e);
+      ss.toSilentMode();
 
     }
 
     function onMessage(m) {
+
+      if(ss._silent_timer) {
+        return;
+      }
+
       //      console.log('[StableSocket] (' + ss._host + ') onMessage: ');
       //      console.log(m);
       try {
@@ -339,7 +366,7 @@
         ss._conn.send(typeof mess == 'string' ? mess: JSON.stringify(mess));
       } else {
         // type: EventSource
-        (typeof process == 'undefined' ? xmlPost: nodePost)(mess);
+        (browsing ? xmlPost: nodePost)(mess);
       }
 
     }
@@ -442,12 +469,118 @@
     }
   }
 
+  function toSilentMode() {
+
+    var ss = this;
+    if(ss._silent_timer) {
+      return;
+    }
+
+    var term = ss._silent_term;
+    if(typeof term == 'function') {
+      term = term();
+    }
+    if(typeof term != 'number') {
+      return;
+    }
+
+    // sign of mode change
+    ss._silent_timer = setTimeout(function() {
+      ss.toActiveMode();
+    }, term);
+
+    // readyState change
+    !ss._conn || ss.close();
+
+  }
+
+  function toAcitveMode() {
+
+    var ss = this;
+    if(!ss._silent_timer) {
+      return;
+    }
+
+    // sign of mode change
+    delete ss._silent_timer;
+
+    // parameter initialize
+    _initRetry(ss);
+
+  }
+
+  /**
+   * @private
+   */
+  function DNSInterval(opts) {
+
+    opts = opts || {};
+
+    var interval = opts.interval || Default.DNSLookupInterval;
+    var timeout = opts.timeout || Default.DNSLookupTimeout;
+
+    var host = opts.host || (exports.location || '').host || 'google.com';
+    var lookup = browsing ? nsBrowserLookup: nsNodeLookup;
+
+    setImmediate(lookup);
+
+    function nsBrowserLookup() {
+
+      var xhr;
+      xhr = new XMLHttpRequest();
+
+      xhr.onreadystatechange = function() {
+        if(xhr.readyState != xhr.DONE)
+          return;
+        (parseInt(String(xhr.status).charAt(0)) < 4 ? ok: ng)();
+      };
+
+      set();
+
+      var ptcl = opts.protocol || (exports.location || '').protocol;
+      xhr.open('GET', [ptcl, host].join('//'), true);
+      xhr.send(null);
+
+    }
+    function nsNodeLookup() {
+
+      set();
+
+      require('dns').lookup(host, function(e, r) {
+        e ? ng(): ok();
+      });
+
+    }
+
+    function set(fn) {
+      StableSocket.LookupTimer = setTimeout(fn || ng, timeout)
+    }
+    function clear() {
+      clearTimeout(StableSocket.LookupTimer);
+    }
+
+    function ok() {
+      clear();
+      Sockets.forEach(function(ss) {
+        ss.onLine = true, ss.toSilentMode();
+      });
+      setTimeout(lookup, interval);
+    }
+    function ng() {
+      clear();
+      Sockets.forEach(function(ss) {
+        ss.onLine = false, ss.toActiveMode();
+      });
+      setTimeout(lookup, interval);
+    }
+
+  }
+
   /**
    * @private
    */
   function _initRetry(ss) {
-    ss._open_error = null;
-    ss._open_retry = ss._open_retry0;
+    ss._open_error = null, ss._open_retry = ss._open_retry0;
     ss._open_retrya = [].concat(ss._open_retryi);
   }
 
