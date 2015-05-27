@@ -150,6 +150,7 @@
 
     function onOpen() {
 
+      ss.onLine = true;
       if(ss._silent_timer) {
         return;
       }
@@ -178,6 +179,7 @@
 
     function onOpeningError(e) {
 
+      ss.onLine = false;
       if(ss._silent_timer) {
         return;
       }
@@ -227,6 +229,7 @@
 
     function onMessage(m) {
 
+      ss.onLine = true;
       if(ss._silent_timer) {
         return;
       }
@@ -258,6 +261,7 @@
 
     function onClose() {
 
+      ss.onLine = false;
       var msg = 'StableSocket Connection is CLOSED. ';
       var ConnectURI = (conf || '').ConnectURI;
 
