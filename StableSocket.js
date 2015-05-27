@@ -88,7 +88,7 @@
     send: send,
     close: close,
     toSilentMode: toSilentMode,
-    toAcitveMode: toAcitveMode
+    toActiveMode: toActiveMode
   };
   for( var i in SSProtos)
     StableSocket.prototype[i] = SSProtos[i];
@@ -494,7 +494,7 @@
 
   }
 
-  function toAcitveMode() {
+  function toActiveMode() {
 
     var ss = this;
     if(!ss._silent_timer) {
@@ -553,7 +553,7 @@
     }
 
     function set(fn) {
-      StableSocket.LookupTimer = setTimeout(fn || ng, timeout)
+      StableSocket.LookupTimer = setTimeout(fn || ng, timeout);
     }
     function clear() {
       clearTimeout(StableSocket.LookupTimer);
@@ -562,14 +562,14 @@
     function ok() {
       clear();
       Sockets.forEach(function(ss) {
-        ss.onLine = true, ss.toSilentMode();
+        ss.onLine = true, ss.toActiveMode();
       });
       setTimeout(lookup, interval);
     }
     function ng() {
       clear();
       Sockets.forEach(function(ss) {
-        ss.onLine = false, ss.toActiveMode();
+        ss.onLine = false, ss.toSilentMode();
       });
       setTimeout(lookup, interval);
     }
