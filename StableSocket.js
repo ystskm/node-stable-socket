@@ -552,8 +552,9 @@
       setNgTimer();
 
       require('dns').lookup(host, function(e, r) {
-        clearNgTimer();
-        e ? ng(): ok();
+        if(LookupTimer === false)
+          return;
+        clearNgTimer(), e ? ng(): ok();
       });
 
     }
@@ -569,12 +570,14 @@
       Sockets.forEach(function(ss) {
         ss.onLine = true, ss.toActiveMode();
       });
+      LookupTimer = false;
       IntervalTimer = setTimeout(lookup, interval);
     }
     function ng() {
       Sockets.forEach(function(ss) {
         ss.onLine = false, ss.toSilentMode();
       });
+      LookupTimer = false;
       IntervalTimer = setTimeout(lookup, interval);
     }
 
