@@ -26,7 +26,7 @@
     OpenRetryInterval: 1000,
 
     DNSLookupTimeout: 10000,
-    DNSLookupInterval: 60000,
+    DNSLookupInterval: 10000,
 
     SilentTerm: 60 * 60 * 1000
 
@@ -47,22 +47,23 @@
   };
 
   var browsing = typeof process == 'undefined';
-  var _rid = 0, _timers = {}, _callbacks = {};
-  var _connector = {};
+  var _rid = 0, _timers = {}, _callbacks = {}, _connector = {};
 
   // necessary for DNS lookup
-  var Sockets = StableSocket.Sockets = [];
-  StableSocket.LookupTimer = null;
+  var Sockets = [];
+  var IntervalTimer = null, LookupTimer = null;
 
   /**
    * @constructor
    */
   function StableSocket(Socket, candidates, options) {
 
-    if(!(this instanceof StableSocket))
+    if(!(this instanceof StableSocket)) {
       return new StableSocket(Socket, candidates, options);
+    }
 
     var ss = this;
+    Sockets.push(ss);
 
     ss._Socket = Socket;
     ss._actors = candidates;
@@ -74,11 +75,10 @@
     ss._index = 0, ss._conn = null, ss._waits = [];
     ss.onopen = ss.onmessage = ss.onerror = ss.onclose = Function();
 
-    Sockets.push(ss);
-
     // kick lookup checker if not exists
-    if(opts.lookup_check !== false && StableSocket.LookupTimer == null)
-      DNSInterval(opts);
+    if(opts.lookup_check !== false && IntervalTimer == null) {
+      startDNSInterval(opts);
+    }
 
   }
 
@@ -516,7 +516,7 @@
   /**
    * @private
    */
-  function DNSInterval(opts) {
+  function startDNSInterval(opts) {
 
     opts = opts || {};
 
@@ -526,7 +526,7 @@
     var host = opts.host || (exports.location || '').host || 'google.com';
     var lookup = browsing ? nsBrowserLookup: nsNodeLookup;
 
-    setImmediate(lookup);
+    IntervalTimer = setImmediate(lookup);
 
     function nsBrowserLookup() {
 
@@ -536,10 +536,11 @@
       xhr.onreadystatechange = function() {
         if(xhr.readyState != xhr.DONE)
           return;
+        clearNgTimer();
         (parseInt(String(xhr.status).charAt(0)) < 4 ? ok: ng)();
       };
 
-      set();
+      setNgTimer();
 
       var ptcl = opts.protocol || (exports.location || '').protocol;
       xhr.open('GET', [ptcl, host].join('//'), true);
@@ -548,34 +549,33 @@
     }
     function nsNodeLookup() {
 
-      set();
+      setNgTimer();
 
       require('dns').lookup(host, function(e, r) {
+        clearNgTimer();
         e ? ng(): ok();
       });
 
     }
 
-    function set(fn) {
-      StableSocket.LookupTimer = setTimeout(fn || ng, timeout);
+    function setNgTimer() {
+      LookupTimer = setTimeout(ng, timeout);
     }
-    function clear() {
-      clearTimeout(StableSocket.LookupTimer);
+    function clearNgTimer() {
+      clearTimeout(LookupTimer);
     }
 
     function ok() {
-      clear();
       Sockets.forEach(function(ss) {
         ss.onLine = true, ss.toActiveMode();
       });
-      setTimeout(lookup, interval);
+      IntervalTimer = setTimeout(lookup, interval);
     }
     function ng() {
-      clear();
       Sockets.forEach(function(ss) {
         ss.onLine = false, ss.toSilentMode();
       });
-      setTimeout(lookup, interval);
+      IntervalTimer = setTimeout(lookup, interval);
     }
 
   }
