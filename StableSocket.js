@@ -70,6 +70,16 @@
 
     var opts = ss.options = options || {};
     ss.logger = opts.logger ? opts.logger: console;
+
+    // care for non-enough object
+    ['log', 'error'].forEach(function(k) {
+
+      typeof ss.logger[k] == 'function' || (ss.logger[k] = function() {
+        console.log.apply(console, arguments);
+      });
+
+    });
+
     opts.timeout = opts.timeout || Timeout.Request;
 
     ss._index = 0, ss._conn = null, ss._waits = [];
