@@ -170,17 +170,31 @@
 
       // when open socket, assign as his own socket.
       // (by readyState judge, occasionally not better.)
-      ss.onopen.call(ss, _connector[ConnectURI] = ss._conn = so);
+      var msg;
+      if((ss._conn || '').readyState != Socket.OPEN) {
 
-      var msg = 'StableSocket Connection is OPEN. ';
+        msg = 'StableSocket Connection is OPEN. \n';
+        ss.onopen.call(ss, _connector[ConnectURI] = ss._conn = so);
+
+      } else {
+
+        msg = 'StableSocket Connection is ALREADY OPEN. \n';
+        msg += 'Use another socket readyState:' + ss._conn.readyState;
+        msg += ', silently close the open socket. \n';
+        so.onmessage = so.onerror = so.onclose = Function();
+        so.close();
+
+      }
+
       logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length);
       _reset(rid);
 
       var waits = _waits;
       ss._waits = [];
 
-      while(waits.length)
+      while(waits.length) {
         ss.send.apply(ss, waits.shift());
+      }
 
       // refresh open error status
       _initRetry(ss);
