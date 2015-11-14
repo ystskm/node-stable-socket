@@ -69,6 +69,7 @@
     ss._actors = candidates;
 
     var opts = ss.options = options || {};
+    opts.timeout = opts.timeout || Timeout.Request;
     ss.logger = opts.logger ? opts.logger: console;
 
     // care for non-enough object
@@ -79,8 +80,6 @@
       });
 
     });
-
-    opts.timeout = opts.timeout || Timeout.Request;
 
     ss._index = 0, ss._conn = null, ss._waits = [];
     ss.onopen = ss.onmessage = ss.onerror = ss.onclose = Function();
@@ -93,12 +92,18 @@
   }
 
   var SSProtos = {
+
     connect: connect,
+    isConnecting: isConnecting,
+
+    readyState: readyState,
     status: status,
+
     send: send,
     close: close,
     toSilentMode: toSilentMode,
     toActiveMode: toActiveMode
+
   };
   for( var i in SSProtos)
     StableSocket.prototype[i] = SSProtos[i];
@@ -109,7 +114,7 @@
   function connect(rid) {
 
     var ss = this, Socket = ss._Socket;
-    var logger = ss.logger, opts = ss.options;
+    var msg, logger = ss.logger, opts = ss.options;
     var _waits = ss._waits;
 
     var conf = ss._actors[ss._index];
@@ -170,8 +175,8 @@
 
       // when open socket, assign as his own socket.
       // (by readyState judge, occasionally not better.)
-      var msg;
-      if((ss._conn || '').readyState != Socket.OPEN) {
+      var rs = ss.readyState();
+      if(rs != Socket.OPEN) {
 
         msg = 'StableSocket Connection is OPEN. \n';
         ss.onopen.call(ss, _connector[ConnectURI] = ss._conn = so);
@@ -179,7 +184,7 @@
       } else {
 
         msg = 'StableSocket Connection is ALREADY OPEN. \n';
-        msg += 'Use another socket readyState:' + ss._conn.readyState;
+        msg += 'Use another socket readyState:' + rs;
         msg += ', silently close the open socket. \n';
         so.onmessage = so.onerror = so.onclose = Function();
         so.close();
@@ -203,12 +208,18 @@
 
     function onOpeningError(e) {
 
+      var rs = ss.readyState();
+      if(rs == Socket.OPEN) {
+        msg = 'StableSocket detects another opened socket on error.';
+        return logger.log(msg);
+      }
+
       ss.onLine = false;
       if(ss._silent_timer) {
         return;
       }
 
-      var msg = 'StableSocket Connection is ERRORED. ';
+      msg = 'StableSocket Connection is ERRORED. ';
       logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length);
 
       ss._conn === true && delete ss._conn;
@@ -216,19 +227,23 @@
 
       // if reconnecting, wait more error
       // until sleeping mode
-      if(--ss._open_retry > 0 && typeof ss._open_retrya[0] == 'number')
-        return setTimeout(function() {
+      if(--ss._open_retry > 0 && typeof ss._open_retrya[0] == 'number') {
+        setTimeout(function() {
           ss.connect(rid);
         }, ss._open_retrya[0]);
+        return;
+      }
 
       // ss._open_retry == 0
       ss._open_retry = ss._open_retry0;
       ss._open_retrya.shift();
 
-      if(ss._open_retrya.length)
-        return setTimeout(function() {
+      if(ss._open_retrya.length) {
+        setTimeout(function() {
           ss.connect(rid);
         }, ss._open_retrya[0]);
+        return;
+      }
 
       _reset(rid);
 
@@ -252,6 +267,12 @@
     }
 
     function onMessage(m) {
+
+      if(so !== ss._conn) {
+        msg = 'StableSocket detects not-primary socket message.';
+        msg += 'This socket will be closed silently.';
+        return logger.log(msg), so.close();
+      }
 
       ss.onLine = true;
       if(ss._silent_timer) {
@@ -285,22 +306,28 @@
 
     function onClose() {
 
-      ss.onLine = false;
-      var msg = 'StableSocket Connection is CLOSED. ';
-      var ConnectURI = (conf || '').ConnectURI;
+      if(so !== ss._conn) {
+        msg = 'StableSocket detects not-primary socket close.';
+        return logger.log(msg);
+      }
 
+      ss.onLine = false;
+      msg = 'StableSocket Connection is CLOSED. ';
+
+      var ConnectURI = (conf || '').ConnectURI;
       logger.log(msg + '(' + ConnectURI + ')');
 
       var so = _connector[ConnectURI];
       if(so) {
 
-        if(so.readyState != Socket.CLOSED)
+        if(so.readyState != Socket.CLOSED) {
           try {
             logger.log('Unexpected readyState: ' + so.readyState);
             so.close();
           } catch(e) {
             logger.log('Closing error: ' + e.message);
           }
+        }
 
         delete _connector[ConnectURI];
         ss.onclose.call(ss);
@@ -311,6 +338,23 @@
 
   }
 
+  /**
+   * 
+   */
+  function isConnecting() {
+    return this._conn === true;
+  }
+
+  /**
+   * 
+   */
+  function readyState() {
+    return this.status();
+  }
+
+  /**
+   * 
+   */
   function status() {
     var ss = this;
     return (ss._conn || '').readyState;
@@ -322,7 +366,7 @@
   function send() {
 
     var ss = this, Socket = ss._Socket;
-    var logger = ss.logger, opts = ss.options;
+    var mes, logger = ss.logger, opts = ss.options;
     var _waits = ss._waits;
 
     var args = Array.prototype.slice.call(arguments);
@@ -339,7 +383,8 @@
     var rid = ++_rid & 0xffffff;
 
     if(callback) {
-      _timers[rid] = setTimeout(timeout, opts.timeout);
+      callback.RETRY == null ? (callback.RETRY = 3): callback.RETRY--;
+      _timers[rid] = setTimeout(requestTimeout, opts.timeout);
       _callbacks[rid] = callback;
     }
 
@@ -348,7 +393,7 @@
       return ss.connect(rid);
     }
 
-    if(ss._conn === true) { // on connecting
+    if(ss.isConnecting()) {
       _waits.push(args);
       return;
     }
@@ -356,7 +401,7 @@
     //    console.log('send.readyState: ' + ss._conn.readyState, args);
     //    console.log(Socket.OPEN, Socket.CONNECTING, Socket.CLOSING, Socket.CLOSED);
 
-    switch(ss._conn.readyState) {
+    switch(ss.readyState()) {
     case Socket.OPEN:
       return write();
 
@@ -373,9 +418,10 @@
       return ss.connect(rid);
 
     default:
-      var mes = 'Unexpected readyState: ' + ss._conn.readyState;
+      mes = 'Unexpected readyState: ' + ss._conn.readyState;
       _reset(rid), logger.log(mes), callback && callback(new Error(mes));
       return;
+
     }
 
     function write() {
@@ -471,16 +517,30 @@
 
     }
 
-    function timeout() {
+    function requestTimeout() {
 
       var callback = _callbacks[rid];
       _reset(rid);
 
-      logger.error('[StableSocket] Timeout occurs.');
+      mes = '[StableSocket] Timeout occurs.';
+      logger.error(mes);
       logger.error(ss._actors[ss._index]);
 
-      ss._conn = null, ss._index++;
-      ss.send.apply(ss, args);
+      if(ss.isConnecting()) {
+        // one more retry 
+        ss.send.apply(ss, args);
+      } else if(callback.RETRY) {
+
+        // Open, but not reachable for the network reason.
+        // Then, force reconnect.
+        logger.log('[StableSocket] Open, but timeout occurs, remains retry: '
+          + callback.RETRY);
+        ss.onLine = false, ss._conn = null, ss._index++;
+        ss.send.apply(ss, args);
+
+      } else {
+        callback(new Error(mes));
+      }
 
     }
 
@@ -544,8 +604,8 @@
 
     opts = opts || {};
 
-    var interval = opts.interval || Default.DNSLookupInterval;
-    var timeout = opts.timeout || Default.DNSLookupTimeout;
+    var lup_intv = opts.interval || Default.DNSLookupInterval;
+    var lup_timo = opts.timeout || Default.DNSLookupTimeout;
 
     var host = opts.host || (exports.location || '').host || 'google.com';
     var lookup = browsing ? nsBrowserLookup: nsNodeLookup;
@@ -584,7 +644,7 @@
     }
 
     function setNgTimer() {
-      LookupTimer = setTimeout(ng, timeout);
+      LookupTimer = setTimeout(ng, lup_timo);
     }
     function clearNgTimer() {
       clearTimeout(LookupTimer);
@@ -595,14 +655,14 @@
         ss.onLine = true, ss.toActiveMode();
       });
       LookupTimer = false;
-      IntervalTimer = setTimeout(lookup, interval);
+      IntervalTimer = setTimeout(lookup, lup_intv);
     }
     function ng() {
       Sockets.forEach(function(ss) {
         ss.onLine = false, ss.toSilentMode();
       });
       LookupTimer = false;
-      IntervalTimer = setTimeout(lookup, interval);
+      IntervalTimer = setTimeout(lookup, lup_intv);
     }
 
   }
