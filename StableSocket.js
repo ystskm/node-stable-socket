@@ -2,17 +2,17 @@
 // StableSocket
 (function(has_win, has_mod) {
 
-  var exports;
+  var global;
   if(has_win) {
     // browser, emulated window
-    exports = window;
+    global = window;
   } else {
     // raw Node.js, web-worker
-    exports = typeof self == 'undefined' ? this: self;
+    global = typeof self == 'undefined' ? this: self;
   }
 
   // exports
-  exports.StableSocket = StableSocket;
+  global.StableSocket = StableSocket;
 
   // module.exports (require)
   !has_mod || (module.exports = StableSocket);
@@ -22,18 +22,30 @@
    */
   var Default = {
 
-    OpenRetryTime: 5,
-    OpenRetryInterval: 1000,
+    Host: {
+      DNSLookup: 'google.com'
+    },
 
-    DNSLookupTimeout: 10000,
-    DNSLookupInterval: 10000,
+    Limit: {
+      OpenRetry: 5,
+      RequestRetry: 3,
+      Queue: 8 * 1024
+    },
 
-    SilentTerm: 60 * 60 * 1000
+    Timeout: {
+      Request: 8 * 1000,
+      DNSLookup: 10 * 1000
+    },
 
-  };
+    Term: {
+      Silent: 60 * 60 * 1000
+    },
 
-  var Timeout = {
-    Request: 8000
+    Interval: {
+      Open: 1 * 1000,
+      DNSLookup: 10 * 1000
+    }
+
   };
 
   var Converter = function(rid, obj) {
@@ -69,16 +81,19 @@
     ss._actors = candidates;
 
     var opts = ss.options = options || {};
-    opts.timeout = opts.timeout || Timeout.Request;
+    opts.timeout = opts.timeout || Default.Timeout.Request;
+    opts.retry = opts.retry || Default.Limit.RequestRetry;
+
     ss.logger = opts.logger ? opts.logger: console;
 
     // care for non-enough object
     ['log', 'error'].forEach(function(k) {
-
-      typeof ss.logger[k] == 'function' || (ss.logger[k] = function() {
+      if(typeof ss.logger[k] == 'function') {
+        return;
+      }
+      ss.logger[k] = function() {
         console.log.apply(console, arguments);
-      });
-
+      };
     });
 
     ss._index = 0, ss._conn = null, ss._waits = [];
@@ -144,13 +159,13 @@
     ss._conn = true; // on connecting sign
 
     // retry status when OpenError occurs.
-    var opts_retry = opts.retry || '';
-    ss._open_retry0 = opts_retry.time || Default.OpenRetryTime;
-    ss._open_retryi = opts_retry.interval || Default.OpenRetryInterval;
+    var opts_retry = opts.open_retry || '';
+    ss._open_retry0 = opts_retry.times || Default.Limit.OpenRetry;
+    ss._open_retryi = opts_retry.interval || Default.Interval.Open;
     _initRetry(ss);
 
     // silent circumstances
-    ss._silent_term = opts_retry.silent || Default.SilentTerm;
+    ss._silent_term = opts_retry.silent || Default.Term.Silent;
     ss._silent_timer = null;
 
     so.onopen = onOpen;
@@ -370,8 +385,14 @@
     var _waits = ss._waits;
 
     var args = Array.prototype.slice.call(arguments);
-    var callback = args[args.length - 1];
-    typeof callback == 'function' || (callback = null);
+    var callback = null, _cb = args[args.length - 1];
+    if(typeof _cb == 'function') {
+      // Set RETRY parameter for each request callback
+      callback = _cb.RETRY == null ? function() {
+        _cb.apply(this, arguments);
+      }: _cb;
+      args[args.length - 1] = callback;
+    }
 
     // at the silent mode, "send" method immediately end.
     // in this case, all commands are disposed.
@@ -384,7 +405,7 @@
 
     if(callback) {
       callback.RETRY == null ? (callback.RETRY = 3): callback.RETRY--;
-      _timers[rid] = setTimeout(requestTimeout, opts.timeout);
+      _timers[rid] = setTimeout(requestError, opts.timeout);
       _callbacks[rid] = callback;
     }
 
@@ -517,24 +538,31 @@
 
     }
 
-    function requestTimeout() {
+    function requestError(e) {
 
-      var callback = _callbacks[rid];
+      var callback = _callbacks[rid] || Function();
       _reset(rid);
 
-      mes = '[StableSocket] Timeout occurs.';
+      mes = '[StableSocket] request error occurs.'
+      mes += '(' + (e ? e.message || e: 'timeout') + ')';
+
       logger.error(mes);
       logger.error(ss._actors[ss._index]);
 
       if(ss.isConnecting()) {
-        // one more retry 
-        ss.send.apply(ss, args);
-      } else if(callback.RETRY) {
+
+        // One more retry => maybe queuing
+        setTimeout(function() {
+          ss.send.apply(ss, args);
+        }, 80);
+
+      } else if(callback.RETRY > 0) {
 
         // Open, but not reachable for the network reason.
         // Then, force reconnect.
         logger.log('[StableSocket] Open, but timeout occurs, remains retry: '
           + callback.RETRY);
+
         ss.onLine = false, ss._conn = null, ss._index++;
         ss.send.apply(ss, args);
 
@@ -604,11 +632,13 @@
 
     opts = opts || {};
 
-    var lup_intv = opts.interval || Default.DNSLookupInterval;
-    var lup_timo = opts.timeout || Default.DNSLookupTimeout;
+    var opts_lup = opts.lookup || '';
+    var lup_intv = opts_lup.interval || Default.Interval.DNSLookup;
+    var lup_timo = opts_lup.timeout || Default.Timeout.DNSLookup;
 
-    var host = opts.host || (exports.location || '').host || 'google.com';
-    var lookup = browsing ? nsBrowserLookup: nsNodeLookup;
+    var lookup = opts_lup.browsing || browsing ? nsBrowserLookup: nsNodeLookup;
+    var host = opts_lup.host || opts.host || (global.location || '').host
+      || Default.Host.DNSLookup;
 
     IntervalTimer = setImmediate(lookup);
 
@@ -626,7 +656,7 @@
 
       setNgTimer();
 
-      var ptcl = opts.protocol || (exports.location || '').protocol;
+      var ptcl = opts.protocol || (global.location || '').protocol;
       xhr.open('GET', [ptcl, host].join('//'), true);
       xhr.send(null);
 
@@ -635,10 +665,13 @@
 
       setNgTimer();
 
-      require('dns').lookup(host, function(e, r) {
-        if(LookupTimer === false)
+      var DNS = require(__dirname + '/lib/dns.js');
+      DNS.lookup(host, function(e, r) {
+        if(LookupTimer === false) {
           return;
-        clearNgTimer(), e ? ng(): ok();
+        }
+        clearNgTimer();
+        e ? ng(): ok();
       });
 
     }
