@@ -29,7 +29,7 @@
     Limit: {
       OpenRetry: 5,
       RequestRetry: 3,
-      Queue: 8 * 1024
+      MaxWait: 8 * 1024
     },
 
     Timeout: {
@@ -83,6 +83,7 @@
     var opts = ss.options = options || {};
     opts.timeout = opts.timeout || Default.Timeout.Request;
     opts.retry = opts.retry || Default.Limit.RequestRetry;
+    opts.max_wait = opts.max_wait || Default.Limit.MaxWait;
 
     ss.logger = opts.logger ? opts.logger: console;
 
@@ -212,6 +213,7 @@
       var waits = _waits;
       ss._waits = [];
 
+      // re-send the waiting requests
       while(waits.length) {
         ss.send.apply(ss, waits.shift());
       }
@@ -226,6 +228,7 @@
       var rs = ss.readyState();
       if(rs == Socket.OPEN) {
         msg = 'StableSocket detects another opened socket on error.';
+        // This request may re-send via the opening socket.
         return logger.log(msg);
       }
 
@@ -240,7 +243,7 @@
       ss._conn === true && delete ss._conn;
       console.error(e);
 
-      // if reconnecting, wait more error
+      // If reconnecting, wait more error
       // until sleeping mode
       if(--ss._open_retry > 0 && typeof ss._open_retrya[0] == 'number') {
         setTimeout(function() {
@@ -273,7 +276,11 @@
       var wait, cb;
       while(waits.length) {
         wait = waits.shift(), cb = wait.pop();
-        typeof cb == 'function' ? cb(e): logger.log('Delete request: ', wait);
+        if(typeof cb == 'function') {
+          cb.requestError(e)
+        } else {
+          logger.log('Delete request: ', wait);
+        }
       }
 
       ss.onerror.call(ss, e);
@@ -382,7 +389,7 @@
 
     var ss = this, Socket = ss._Socket;
     var mes, logger = ss.logger, opts = ss.options;
-    var _waits = ss._waits;
+    var _waits = ss._waits, max_wait = opts.max_wait;
 
     var args = Array.prototype.slice.call(arguments);
     var callback = null, _cb = args[args.length - 1];
@@ -404,18 +411,21 @@
     var rid = ++_rid & 0xffffff;
 
     if(callback) {
-      callback.RETRY == null ? (callback.RETRY = 3): callback.RETRY--;
+      callback.RETRY == null ? (callback.RETRY = opts.retry): callback.RETRY--;
+      callback.requestError = requestError;
       _timers[rid] = setTimeout(requestError, opts.timeout);
       _callbacks[rid] = callback;
     }
 
     if(ss._conn == null) {
-      _waits.push(args);
+      if(!pushQueue(args)) {
+        return;
+      }
       return ss.connect(rid);
     }
 
     if(ss.isConnecting()) {
-      _waits.push(args);
+      pushQueue(args);
       return;
     }
 
@@ -427,22 +437,37 @@
       return write();
 
     case Socket.CONNECTING:
-      _waits.push(args);
+      pushQueue(args);
       return;
 
     case Socket.CLOSING:
-      _waits.push(args), ss._index++;
+      if(!pushQueue(args)) {
+        return;
+      }
+      ss._index++;
       return ss.connect(rid);
 
     case Socket.CLOSED:
-      _waits.push(args), ss._index++;
+      if(!pushQueue(args)) {
+        return;
+      }
+      ss._index++;
       return ss.connect(rid);
 
     default:
       mes = 'Unexpected readyState: ' + ss._conn.readyState;
-      _reset(rid), logger.log(mes), callback && callback(new Error(mes));
+      requestError(mes, false);
       return;
 
+    }
+
+    function pushQueue() {
+      if(_waits.length < max_wait) {
+        return _waits.push(args), true;
+      }
+      mes = 'Too many wait more than ' + max_wait;
+      requestError(mes, false);
+      return false;
     }
 
     function write() {
@@ -538,7 +563,7 @@
 
     }
 
-    function requestError(e) {
+    function requestError(e, retry) {
 
       var callback = _callbacks[rid] || Function();
       _reset(rid);
@@ -555,20 +580,29 @@
         setTimeout(function() {
           ss.send.apply(ss, args);
         }, 80);
+        return;
 
-      } else if(callback.RETRY > 0) {
+      }
+
+      if(callback.RETRY > 0) {
+
+        if(retry === false) {
+          callback(new Error(mes));
+          return;
+        }
 
         // Open, but not reachable for the network reason.
         // Then, force reconnect.
-        logger.log('[StableSocket] Open, but timeout occurs, remains retry: '
-          + callback.RETRY);
+        logger.log('[StableSocket] request error occurs. readyState: '
+          + ss.readyState() + ', retry remains: ' + callback.RETRY);
 
         ss.onLine = false, ss._conn = null, ss._index++;
         ss.send.apply(ss, args);
+        return;
 
-      } else {
-        callback(new Error(mes));
       }
+
+      callback(new Error(mes));
 
     }
 
