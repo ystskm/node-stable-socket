@@ -81,6 +81,8 @@
     ss._actors = candidates;
 
     var opts = ss.options = options || {};
+    opts.callback = opts.callback == null ? true: opts.callback;
+
     opts.timeout = opts.timeout || Default.Timeout.Request;
     opts.retry = opts.retry || Default.Limit.RequestRetry;
     opts.max_wait = opts.max_wait || Default.Limit.MaxWait;
@@ -305,9 +307,8 @@
       //      console.log(m);
       try {
 
-        // data analyzed by analyzer.
-        // WebSocket => raw message 
-        // EventSource => wrapped event object
+        // Data analyzed by analyzer.
+        // "WebSocket" => raw message, "EventSource" => wrapped event object
         var raw = ss._host.indexOf('ws') == 0 ? m: m.data;
         var data = (opts.analyzer || Analyzer)(raw) || '';
 
@@ -393,12 +394,18 @@
 
     var args = Array.prototype.slice.call(arguments);
     var callback = null, _cb = args[args.length - 1];
-    if(typeof _cb == 'function') {
-      // Set RETRY parameter for each request callback
-      callback = _cb.RETRY == null ? function() {
-        _cb.apply(this, arguments);
-      }: _cb;
-      args[args.length - 1] = callback;
+    if(opts.callback) {
+      // If opts.callback available, set callback with RETRY parameter
+      // (Default:true)
+      if(typeof _cb == 'function') {
+
+        // Set RETRY parameter for each request callback
+        callback = _cb.RETRY == null ? function() {
+          _cb.apply(this, arguments);
+        }: _cb;
+        args[args.length - 1] = callback;
+
+      }
     }
 
     // at the silent mode, "send" method immediately end.
