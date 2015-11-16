@@ -482,9 +482,11 @@
       var conv = (opts.converter || Converter);
       var rurl, mess;
 
-      if(typeof args[0] == 'string') {
+      if(typeof args[0] == 'string' && args[1] == callback) {
+        // send single raw string
         mess = args[0];
       } else {
+        // multiple arguments
         mess = conv.apply(ss, [rid].concat(args));
       }
 
