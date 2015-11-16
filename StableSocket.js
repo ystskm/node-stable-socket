@@ -315,12 +315,12 @@
         var h = data[0] || '', b = data[1] || '', rid = h.rid;
         (_callbacks[rid] || Function())(b), _reset(rid);
 
-        // get raw message.
-        ss.onmessage(m);
+        // Get raw message.
+        ss.onmessage(m, data);
 
       } catch(e) {
 
-        // get raw message. (unparsable)
+        // Get raw message. (unparsable message)
         ss.onmessage(m, false);
 
       }
