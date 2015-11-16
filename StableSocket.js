@@ -490,6 +490,7 @@
         mess = conv.apply(ss, [rid].concat(args));
       }
 
+      // console.log('REQUEST:', mess, callback);
       if(ss._conn.send) {
         // type: WebSocket
         ss._conn.send(typeof mess == 'string' ? mess: JSON.stringify(mess));
@@ -578,7 +579,7 @@
       _reset(rid);
 
       mes = '[StableSocket] request error occurs.'
-      mes += '(' + (e ? e.message || e: 'timeout') + ')';
+      mes += '(' + (e ? e.message || e: 'timeout?') + ')';
 
       logger.error(mes);
       logger.error(ss._actors[ss._index]);
