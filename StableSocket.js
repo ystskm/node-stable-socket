@@ -92,9 +92,18 @@
     opts.retry = opts.retry || Default.Limit.RequestRetry;
     opts.max_wait = opts.max_wait || Default.Limit.MaxWait;
 
-    ss.logger = opts.logger ? opts.logger: console;
+    // retry status when OpenError occurs.
+    var opts_retry = opts.open_retry || '';
+    ss._open_retry0 = opts_retry.times || Default.Limit.OpenRetry;
+    ss._open_retryi = opts_retry.interval || Default.Interval.Open;
+    _initRetry(ss);
 
-    // care for non-enough object
+    // silent circumstances
+    ss._silent_term = opts_retry.silent || Default.Term.Silent;
+    ss._silent_timer = null;
+
+    // logger with care for non-enough object
+    ss.logger = opts.logger ? opts.logger: console;
     ['log', 'error'].forEach(function(k) {
       if(typeof ss.logger[k] == 'function') {
         return;
@@ -153,8 +162,8 @@
     var ConnectURI = conf.ConnectURI;
     if(_connector[ConnectURI] != null) {
       // reconnecting warning
-      console.log('[StableSocket] ' + new Date().toGMTString() + ' - ');
-      console.log('Overwrite connector before close for: ' + ConnectURI);
+      logger.log('[StableSocket] ' + new Date().toGMTString() + ' - ');
+      logger.log('Overwrite connector before close for: ' + ConnectURI);
       onClose();
     }
 
@@ -164,16 +173,6 @@
 
     ss._host = ConnectURI.split('/').slice(0, 3).join('/');
     ss._conn = true; // on connecting sign
-
-    // retry status when OpenError occurs.
-    var opts_retry = opts.open_retry || '';
-    ss._open_retry0 = opts_retry.times || Default.Limit.OpenRetry;
-    ss._open_retryi = opts_retry.interval || Default.Interval.Open;
-    _initRetry(ss);
-
-    // silent circumstances
-    ss._silent_term = opts_retry.silent || Default.Term.Silent;
-    ss._silent_timer = null;
 
     so.onopen = onOpen;
     so.onmessage = onMessage;
@@ -231,6 +230,9 @@
 
     function onOpeningError(e) {
 
+      // off opening error.
+      onOpeningError = Function();
+
       try {
         // Destroy the creating socket 
         // to avoid automatic reconnecting.
@@ -254,29 +256,39 @@
 
       msg = 'StableSocket Connection is ERRORED. ';
       logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length);
-
-      if(ss.isConnecting()) {
-        ss._conn = null;
-      }
       console.error(e);
 
+      var retryConnect = function() {
+
+        logger.log('retryConnect remains: ', ss._open_retry, ss._open_retrya);
+
+        var intv = ss._open_retrya[0];
+        if(typeof intv != 'number') {
+          return false;
+        }
+
+        setTimeout(function() {
+
+          if(ss.isConnecting()) {
+            ss._conn = null;
+          }
+          ss.connect(rid);
+
+        }, ss._open_retrya[0]);
+        return true;
+
+      };
       // If reconnecting, wait more error
       // until sleeping mode
-      if(--ss._open_retry > 0 && typeof ss._open_retrya[0] == 'number') {
-        setTimeout(function() {
-          ss.connect(rid);
-        }, ss._open_retrya[0]);
+      if(--ss._open_retry > 0 && retryConnect()) {
         return;
       }
 
-      // Now, ss._open_retry === 0
+      // Now, _open_retry === 0
       ss._open_retry = ss._open_retry0;
       ss._open_retrya.shift();
 
-      if(ss._open_retrya.length) {
-        setTimeout(function() {
-          ss.connect(rid);
-        }, ss._open_retrya[0]);
+      if(retryConnect()) {
         return;
       }
 
@@ -291,13 +303,15 @@
       ss._waits = [];
 
       var wait, cb;
-      while(waits.length) {
-        wait = waits.shift(), cb = wait.pop();
-        if(typeof cb == 'function') {
-          cb.requestError(e, false);
-        } else {
-          logger.log('Delete request: ', wait);
+      logger.log('Goto removing ' + waits.length + ' requests.');
+
+      try {
+        while(waits.length) {
+          wait = waits.shift(), cb = wait.pop();
+          typeof cb != 'function' || cb.requestError(e, false);
         }
+      } catch(e) {
+
       }
 
       ss.onerror.call(ss, e);
@@ -505,7 +519,6 @@
         mess = conv.apply(ss, [rid].concat(args));
       }
 
-      // console.log('REQUEST:', mess, callback);
       if(ss._conn.send) {
         // type: WebSocket
         ss._conn.send(typeof mess == 'string' ? mess: JSON.stringify(mess));
@@ -599,6 +612,11 @@
       logger.error(mes);
       logger.error(ss._actors[ss._index]);
 
+      if(retry === false) {
+        callback(new Error(mes));
+        return;
+      }
+
       if(ss.isConnecting()) {
 
         // One more retry => maybe queuing
@@ -610,11 +628,6 @@
       }
 
       if(callback.RETRY > 0) {
-
-        if(retry === false) {
-          callback(new Error(mes));
-          return;
-        }
 
         // Open, but not reachable for the network reason.
         // Then, force reconnect.
@@ -634,13 +647,12 @@
   }
 
   function close() {
-    var ss = this, _conn = ss._conn;
+    var ss = this, logger = ss.logger;
+    var _conn = ss._conn;
     try {
-      ss._conn = null;
-      _conn.close();
+      ss._conn = null, _conn.close();
     } catch(e) {
-      console.log(new Date() + ' - ');
-      console.log('[StableSocket] close error.', e);
+      logger.log('[StableSocket] close error.', e);
     }
   }
 
