@@ -251,7 +251,7 @@
       msg = 'StableSocket Connection is ERRORED. ';
       logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length);
 
-      if(ss.isConnected()) {
+      if(ss.isConnecting()) {
         ss._conn = null;
       }
       console.error(e);
