@@ -17,6 +17,10 @@
   // module.exports (require)
   !has_mod || (module.exports = StableSocket);
 
+  // extra exports
+  var DNS = require(__dirname + '/lib/dns.js');
+  StableSocket.DNS = DNS;
+
   /**
    * 
    */
@@ -38,11 +42,12 @@
     },
 
     Term: {
-      Silent: 60 * 60 * 1000
+      // 15 minute
+      Silent: 15 * 60 * 1000
     },
 
     Interval: {
-      Open: 1 * 1000,
+      Open: [1 * 1000, 10 * 1000, 30 * 1000, 60 * 1000],
       DNSLookup: 10 * 1000
     }
 
@@ -146,7 +151,6 @@
     }
 
     var ConnectURI = conf.ConnectURI;
-
     if(_connector[ConnectURI] != null) {
       // reconnecting warning
       console.log('[StableSocket] ' + new Date().toGMTString() + ' - ');
@@ -265,7 +269,7 @@
         return;
       }
 
-      // ss._open_retry == 0
+      // Now, ss._open_retry === 0
       ss._open_retry = ss._open_retry0;
       ss._open_retrya.shift();
 
@@ -290,7 +294,7 @@
       while(waits.length) {
         wait = waits.shift(), cb = wait.pop();
         if(typeof cb == 'function') {
-          cb.requestError(e)
+          cb.requestError(e, false);
         } else {
           logger.log('Delete request: ', wait);
         }
@@ -661,7 +665,9 @@
     }, term);
 
     // readyState change
-    !ss._conn || ss.close();
+    if(ss.readyState()) {
+      ss.close();
+    }
 
   }
 
@@ -720,7 +726,6 @@
 
       setNgTimer();
 
-      var DNS = require(__dirname + '/lib/dns.js');
       DNS.lookup(host, function(e, r) {
         if(LookupTimer === false) {
           return;
