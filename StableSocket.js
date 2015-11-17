@@ -227,6 +227,15 @@
 
     function onOpeningError(e) {
 
+      try {
+        // Destroy the creating socket 
+        // to avoid automatic reconnecting.
+        so.close();
+      } catch(e) {
+        msg = 'StableScoket close error on "onOpeningError" close.'
+        logger.log(msg + (e ? e.message || e: 'unknown'));
+      }
+
       var rs = ss.readyState();
       if(rs == Socket.OPEN) {
         msg = 'StableSocket detects another opened socket on error.';
@@ -242,7 +251,9 @@
       msg = 'StableSocket Connection is ERRORED. ';
       logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length);
 
-      ss._conn === true && delete ss._conn;
+      if(ss.isConnected()) {
+        ss._conn = null;
+      }
       console.error(e);
 
       // If reconnecting, wait more error
@@ -340,22 +351,22 @@
       var ConnectURI = (conf || '').ConnectURI;
       logger.log(msg + '(' + ConnectURI + ')');
 
-      var so = _connector[ConnectURI];
-      if(so) {
-
-        if(so.readyState != Socket.CLOSED) {
-          try {
-            logger.log('Unexpected readyState: ' + so.readyState);
-            so.close();
-          } catch(e) {
-            logger.log('Closing error: ' + e.message);
-          }
-        }
-
-        delete _connector[ConnectURI];
-        ss.onclose.call(ss);
-
+      var _so = _connector[ConnectURI];
+      if(_so == null) {
+        return;
       }
+
+      if(_so.readyState != Socket.CLOSED) {
+        try {
+          logger.log('Unexpected readyState: ' + _so.readyState);
+          _so.close();
+        } catch(e) {
+          logger.log('Closing error: ' + e.message);
+        }
+      }
+
+      delete _connector[ConnectURI];
+      ss.onclose.call(ss);
 
     }
 
