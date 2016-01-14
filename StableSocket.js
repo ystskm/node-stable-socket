@@ -38,16 +38,20 @@
 
     Timeout: {
       Request: 8 * 1000,
-      DNSLookup: 10 * 1000
+      DNSLookup: 8 * 1000
+    },
+
+    Delay: {
+      Denied: 300
     },
 
     Term: {
-      // 15 minute
-      Silent: 15 * 60 * 1000
+      // 5 minute
+      Silent: 5 * 60 * 1000
     },
 
     Interval: {
-      Open: [1 * 1000, 10 * 1000, 30 * 1000, 60 * 1000],
+      Open: [1 * 1000, 10 * 1000, 15 * 1000, 30 * 1000, 60 * 1000],
       DNSLookup: 10 * 1000
     }
 
@@ -84,6 +88,7 @@
 
     ss._Socket = Socket;
     ss._actors = candidates;
+    ss._times = {};
 
     var opts = ss.options = options || {};
     opts.callback = opts.callback == null ? true: opts.callback;
@@ -91,6 +96,7 @@
     opts.timeout = opts.timeout || Default.Timeout.Request;
     opts.retry = opts.retry || Default.Limit.RequestRetry;
     opts.max_wait = opts.max_wait || Default.Limit.MaxWait;
+    opts.delay_as_denied = opts.delay_as_denied || Default.Delay.Denied;
 
     // retry status when OpenError occurs.
     var opts_retry = opts.open_retry || '';
@@ -114,7 +120,9 @@
     });
 
     ss._index = 0, ss._conn = null, ss._waits = [];
-    ss.onopen = ss.onmessage = ss.onerror = ss.onclose = Function();
+    ['open', 'mesage', 'error', 'close', 'denied'].forEach(function(evt_n) {
+      ss['on' + evt_n] = Function();
+    });
 
     // kick lookup checker if not exists
     if(opts.lookup_check !== false && IntervalTimer == null) {
@@ -134,7 +142,8 @@
     send: send,
     close: close,
     toSilentMode: toSilentMode,
-    toActiveMode: toActiveMode
+    toActiveMode: toActiveMode,
+    redefineCandidates: redefineCandidates
 
   };
   for( var i in SSProtos)
@@ -186,7 +195,7 @@
 
     function onOpen() {
 
-      ss.onLine = true;
+      ss.onLine = true, ss._times['LastOpen'] = Date.now();
       if(ss._silent_timer) {
         return;
       }
@@ -363,11 +372,16 @@
         return logger.log(msg);
       }
 
-      ss.onLine = false;
+      ss.onLine = false, ss._times['LastClose'] = new Date();
       msg = 'StableSocket Connection is CLOSED. ';
 
       var ConnectURI = (conf || '').ConnectURI;
       logger.log(msg + '(' + ConnectURI + ')');
+
+      // If arbitrary close is detected, emit event "ondenied"
+      if(ss._times['LastClose'] - ss._times['LastOpen'] < opts.delay_as_denied) {
+        ss.ondenied.call(ss, ConnectURI);
+      }
 
       var _so = _connector[ConnectURI];
       if(_so == null) {
@@ -696,6 +710,18 @@
     // parameter initialize
     _initRetry(ss);
 
+  }
+
+  /**
+   * @returns <Object> StableSocket
+   */
+  function redefineCandidates(candidates) {
+    var ss = this;
+
+    var _actors = ss._actors;
+    ss._actors = candidates;
+
+    return ss;
   }
 
   /**
