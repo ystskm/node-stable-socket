@@ -492,7 +492,8 @@
     var args = casting(arguments);
     var callback = null, options = {}, _cb = args[args.length - 1];
 
-    if(!isFunction(_cb)) {
+    var hasCb = isFunction(_cb);
+    if(!hasCb) {
       args.push(_cb = Function());
     }
     if(args.length >= 3) {
@@ -500,20 +501,28 @@
     }
 
     var _cbOpcd;
+    // If opts.callback available, set callback with RETRY parameter
+    // (Default:true)
     if(opts.callback) {
 
-      // If opts.callback available, set callback with RETRY parameter
-      // (Default:true)
-
       // The "_cb" occasionally options
-      // "opcodeCallback" for the easy check
+      // "opcodeCallback" for the easy check (=> callback on response)
       _cbOpcd = !!options.opcodeCallback;
+      if(hasCb || _cbOpcd) {
 
-      // Set RETRY parameter for each request callback
-      callback = _cb.RETRY == null ? function() {
-        _cb.apply(this, arguments);
-      }: _cb;
-      args[args.length - 1] = callback;
+        // Now, always set "_cbOpcd" truly
+        // for when has truly callback, timeout occurs 
+        // if "_cbOpcd" is falsy.
+        _cbOpcd = true;
+
+        // Set RETRY parameter for each request callback
+        // with wrapping.
+        callback = _cb.RETRY != null ? _cb: function() {
+          _cb.apply(this, arguments);
+        };
+        args[args.length - 1] = callback;
+
+      }
 
     }
 
@@ -576,7 +585,9 @@
 
     function pushQueue(args, rid) {
       _reset(rid);
-      if(_waits.length < max_wait) return _waits.push(args), true;
+      if(_waits.length < max_wait) {
+        return _waits.push(args), true;
+      }
       requestError('Too many wait more than ' + max_wait, false);
       return false;
     }
