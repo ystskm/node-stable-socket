@@ -382,13 +382,35 @@
         var data = (opts.analyzer || Analyzer)(raw) || '';
 
         // and callback if exist.
-        var h = data[0] || '', b = data[1] || '', rid = h.rid;
+        var h = data[0] || '', b = data[1], rid = h.rid;
         var cb = _callbacks[rid];
 
-        // callback with 1st argument treat as "SUCCESSFULLY" 
+        // Callback with 1st argument treat as "SUCCESSFULLY" 
         // for the function(data, callback){ ... } type.
-        !isFunction(cb) || cb(b);
-        _reset(rid);
+        var rep, rep_k, rep_v, ini_v;
+        if(isFunction(cb)) {
+
+          rep = cb.reply || [];
+          rep_k = rep[0], ini_v = rep[1];
+          switch(rep_k) {
+
+          case 'head':
+            rep_v = data[0];
+            break;
+
+          case 'body':
+            rep_v = data[1];
+            break;
+
+          case 'data':
+          default:
+            rep_v = data;
+
+          }
+          rep_v || typeof ini_v == 'undefined' || (rep_v = ini_v);
+          cb(rep_v), _reset(rid);
+
+        } // <-- if(isFunction(cb)) { ... } <--
 
         // Get raw message.
         ss.onmessage(evt, data);
@@ -396,6 +418,7 @@
       } catch(e) {
 
         // Get raw message. (exparsable message)
+        ss.logger.error(e);
         ss.onmessage(evt, false);
 
       }
@@ -537,12 +560,16 @@
     if(callback) {
 
       if(callback.RETRY == null) {
-        callback.RETRY = options.retry || opts.retry
+        callback.RETRY = options.retry || opts.retry;
       } else {
         callback.RETRY--;
       }
 
+      // fix the callback return value ([ [data|body|head], falsy value ])
+      callback.reply = options.reply || opts.reply || ['body'];
       callback.requestError = requestError;
+
+      // register the callback
       _timers[rid] = setTimeout(requestError, opts.timeout);
       _callbacks[rid] = callback;
 
