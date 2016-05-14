@@ -71,6 +71,8 @@
 
   // Receiving Data
   var Analyzer = function(msg) {
+    if(msg == 'PING') return msg;
+    if(msg == 'PONG') return msg;
     return JSON.parse(msg);
   };
 
@@ -417,7 +419,8 @@
 
       } catch(e) {
 
-        // Get raw message. (exparsable message)
+        // Get raw message. 
+        // (Default: exparsable message, except "PING" and "PONG")
         ss.logger.error(e);
         ss.onmessage(evt, false);
 
