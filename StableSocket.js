@@ -366,7 +366,7 @@
       if(so !== ss._conn) {
         msg = 'StableSocket detects not-primary socket message.';
         msg += 'This socket will be closed silently.';
-        return logger.log(msg), so.close();
+        return logger.log(msg), !so || so.close();
       }
 
       ss.onLine = true;
@@ -471,7 +471,7 @@
       if(_so.readyState != Socket.CLOSED) {
         try {
           logger.log('Unexpected readyState: ' + _so.readyState);
-          _so.close();
+          !_so || _so.close();
         } catch(e) {
           logger.log('Closing error: ' + e.message);
         }
@@ -778,7 +778,8 @@
 
         // Don't forget remove listeners and close socket.
         // Old socket no longer be used.
-        ss.removeListeners(so), !so || so.close();
+        ss.removeListeners(so);
+        ss.close();
 
         // Set reconnect condition and re-open new socket.
         ss.onLine = false, ss._conn = null, ss._index++;
@@ -800,7 +801,8 @@
 
     try {
       ss._conn = null;
-      so.close();
+      !so || so.close();
+      logger.log('[StableSocket] close connection: ', ss);
     } catch(e) {
       logger.log('[StableSocket] close error.', e);
     }
