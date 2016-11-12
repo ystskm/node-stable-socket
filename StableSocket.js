@@ -205,12 +205,14 @@
       onClose();
     }
 
-    var so = new Socket(ConnectURI + (opts.query || ''), {
-      rejectUnauthorized: false
-    });
+    var so_opts = {};
+    so_opts.rejectUnauthorized = false;
+    if(opts.agent) so_opts.agent = opts.agent;
+    
+    var so = new Socket(ConnectURI + (opts.query || ''), so_opts);
 
     ss._host = ConnectURI.split('/').slice(0, 3).join('/');
-    ss._conn = true; // on connecting sign
+    ss._conn = !0; // on connecting sign
 
     var evts_map = so.EventHandler = {
       open: onOpen,
@@ -666,9 +668,11 @@
         hostname: host.replace(prtc + '://', ''),
         path: url,
         method: 'POST',
-        headers: headers,
-        rejectUnauthorized: false
+        headers: headers
       };
+      
+      options.rejectUnauthorized = false;
+      if(opts.agent) options.agent = opts.agent;
 
       //      console.log('MESSAGE!', mess, options);
 
