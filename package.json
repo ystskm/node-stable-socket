@@ -1,6 +1,6 @@
 {
   "name": "stable-socket",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "author": {
     "name": "Yoshitaka Sakamoto",
     "url": "http://github.com/ystskm",
@@ -8,7 +8,9 @@
   },
   "contributors": [],
   "description": "Auto reconnect, multiple boundary socket connector.",
-  "dependencies": {},
+  "dependencies": {
+    "https-proxy-agent": "1.0.0"
+  },
   "devDependencies": {
     "websockets":"*",
     "nodeunit": "*",

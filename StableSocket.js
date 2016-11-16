@@ -897,6 +897,7 @@
    */
   function startDNSInterval(opts) {
 
+    // Inherits StableSocket options
     opts = opts || {};
 
     var opts_lup = opts.lookup || '';
@@ -931,7 +932,7 @@
 
       setNgTimer();
 
-      DNS.lookup(host, function(e, r) {
+      DNS.lookup(host, { proxy: opts.proxy }, function(e, r) {
         if(LookupTimer === false) {
           return;
         }
