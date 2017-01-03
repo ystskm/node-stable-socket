@@ -22,10 +22,10 @@
     "url": "http://github.com/ystskm/stable-socket-js",
     "type": "git"
   },
-  "licenses": [{
-      "type": "MIT",
-      "url": "https://github.com/ystskm/node-localelist/blob/master/LICENSE"
-  }],
+  "license": {
+    "type": "MIT",
+    "url": "https://github.com/ystskm/node-localelist/blob/master/LICENSE"
+  },
   "scripts": {
     "test": "node test/_runner.js"
   }
