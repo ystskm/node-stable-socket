@@ -877,6 +877,9 @@
 
     // parameter initialize
     _initRetry(ss);
+    
+    // challenge reconnect immediately.
+    ss.connect();
 
   }
 
