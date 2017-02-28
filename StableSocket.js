@@ -2,17 +2,18 @@
 // StableSocket
 (function(has_win, has_mod) {
 
-  var global;
+  var NULL = null, TRUE = true, FALSE = false;
+  var g;
   if(has_win) {
     // browser, emulated window
-    global = window;
+    g = window;
   } else {
     // raw Node.js, web-worker
-    global = typeof self == 'undefined' ? this: self;
+    g = typeof self == 'undefined' ? this: self;
   }
 
   // exports
-  global.StableSocket = StableSocket;
+  g.StableSocket = StableSocket;
 
   // module.exports (require)
   !has_mod || (module.exports = StableSocket);
@@ -20,7 +21,7 @@
   // extra exports
   var DNS;
   if(typeof require == 'undefined') {
-    DNS = global.DNS || Function();
+    DNS = g.DNS || Function();
   } else {
     DNS = require(__dirname + '/lib/dns.js');
   }
@@ -29,21 +30,22 @@
   /**
    * 
    */
+  var DNS_URL = 'https://raw.githubusercontent.com/ystskm/stable-socket-js/master/LICENSE';
   var Default = {
 
     Host: {
-      DNSLookup: 'google.com'
+      DNSLookup: DNS_URL
     },
 
     Limit: {
       OpenRetry: 5,
       RequestRetry: 3,
-      MaxWait: 8 * 1024
+      MaxWait: 50
     },
 
     Timeout: {
       Request: 8 * 1000,
-      DNSLookup: 8 * 1000
+      DNSLookup: 3 * 1000
     },
 
     Delay: {
@@ -57,7 +59,7 @@
 
     Interval: {
       Open: [1 * 1000, 10 * 1000, 15 * 1000, 30 * 1000, 60 * 1000],
-      DNSLookup: 10 * 1000
+      DNSLookup: 8 * 1000
     }
 
   };
@@ -80,9 +82,41 @@
   var _rid = 0, _timers = {}, _callbacks = {}, _connector = {};
   var k, stdout;
 
-  // necessary for DNS lookup
+  // Necessary for DNS lookup
   var Sockets = [];
-  var IntervalTimer = null, LookupTimer = null;
+  var IntervalTimer = NULL, LookupTimer = NULL;
+
+  var wakeup = function() {
+    Sockets.forEach(function(ss) {
+
+      // DONNOT "toActivateMode" at status online.
+			var Socket = ss._Socket || {};
+      if(ss.onLine && ss.readyState() == Socket.OPEN) {
+        return;
+      }
+
+      // ss.onLine = true; => occasionally bad AP exists.
+      ss.toActiveMode(TRUE);
+
+    });
+  };
+
+  var quiet = function() {
+    Sockets.forEach(function(ss) {
+
+      ss.onLine = FALSE;
+      ss.toSilentMode(TRUE);
+
+    });
+  };
+
+  var online = function() {
+    Sockets.forEach(function(ss) {
+
+      ss.onLine = TRUE;
+
+    });
+  };
 
   /**
    * @constructor
@@ -116,22 +150,22 @@
 
     // silent circumstances
     ss._silent_term = opts_retry.silent || Default.Term.Silent;
-    ss._silent_timer = null;
+    ss._silent_timer = NULL;
 
     // logger with care for non-enough object
     ss.logger = opts.logger ? opts.logger: Function();
     ['log', 'error'].forEach(function(k) {
 
       isFunction(ss.logger[k]) || (ss.logger[k] = function() {
-        if(ss.stdout() === false) return;
-        global.console.log.apply(global.console, arguments);
+        if(ss.stdout() === FALSE) return;
+        g.console.log.apply(g.console, arguments);
       });
 
     });
 
     // Initialize EventListeners
     var evts = ['open', 'message', 'error', 'close', 'denied'];
-    ss._index = 0, ss._conn = null, ss._waits = [];
+    ss._index = 0, ss._conn = NULL, ss._waits = [];
 
     // Stable Socket is NOT a event emitter.
     // Only one function can efficient for each object. ( onopen, ... )
@@ -140,11 +174,11 @@
     });
 
     // kick lookup checker if not exists
-    if(!DNS.lookup) {
+    if(!DNS.lookup || IntervalTimer != NULL) {
       return;
     }
-    if(opts.lookup_check !== false && IntervalTimer == null) {
-      startDNSInterval(opts);
+    if(opts.lookup_check !== FALSE) {
+      startDNSInterval(ss.logger, opts);
     }
 
   }
@@ -159,6 +193,7 @@
 
     send: send,
     close: close,
+		pinger: pinger,
 
     // addListeners: addListeners,
     removeListeners: removeListeners,
@@ -190,7 +225,7 @@
     var conf = ss._actors[ss._index];
     conf || (conf = ss._actors[ss._index = 0]);
 
-    if(conf == null) {
+    if(conf == NULL) {
       onOpeningError(new Error('Actor for connect is not found.'));
       logger.error('Check your configuration!');
       logger.error(ss._actors, ss._index);
@@ -198,7 +233,7 @@
     }
 
     var ConnectURI = conf.ConnectURI;
-    if(_connector[ConnectURI] != null) {
+    if(_connector[ConnectURI] != NULL) {
       // reconnecting warning
       logger.log('[StableSocket] ' + new Date().toGMTString() + ' - ');
       logger.log('  Overwrite connector before close for: ' + ConnectURI);
@@ -206,13 +241,12 @@
     }
 
     var so_opts = {};
-    so_opts.rejectUnauthorized = false;
+    so_opts.rejectUnauthorized = FALSE;
     if(opts.agent) so_opts.agent = opts.agent;
-    
-    var so = new Socket(ConnectURI + (opts.query || ''), so_opts);
 
+    var so = new Socket(ConnectURI + (opts.query || ''), so_opts);
     ss._host = ConnectURI.split('/').slice(0, 3).join('/');
-    ss._conn = !0; // on connecting sign
+    ss._conn = TRUE; // On connecting sign
 
     var evts_map = so.EventHandler = {
       open: onOpen,
@@ -233,10 +267,8 @@
 
     function onOpen(evt) {
 
-      ss.onLine = true, ss._times['LastOpen'] = Date.now();
-      if(ss._silent_timer) {
-        return;
-      }
+      ss._times['LastOpen'] = Date.now();
+      online(), _clearSilentMode(ss);
 
       // Off opening event handler and opening error handler.
       onOpeningError = Function();
@@ -282,9 +314,11 @@
       ss.removeListeners(so);
 
       try {
+
         // Destroy the creating socket 
         // to avoid automatic reconnecting.
         so.close();
+
       } catch(e) {
         msg = 'StableScoket close error on "onOpeningError" close.'
         logger.log(msg + (e ? e.message || e: 'unknown'));
@@ -297,7 +331,7 @@
         return logger.log(msg);
       }
 
-      ss.onLine = false;
+      ss.onLine = FALSE;
       if(ss._silent_timer) {
         return;
       }
@@ -311,16 +345,17 @@
         logger.log('retryConnect remains: ', ss._open_retry, ss._open_retrya);
 
         var intv = ss._open_retrya[0];
-        if(!is('number', intv)) return false;
+        if(!is('number', intv)) return FALSE;
         setTimeout(function() {
 
-          if(ss.isConnecting()) ss._conn = null;
+          if(ss.isConnecting()) ss._conn = NULL;
           ss.connect(rid);
 
         }, ss._open_retrya[0]);
         return true;
 
       };
+
       // If reconnecting, wait more error
       // until sleeping mode
       if(--ss._open_retry > 0 && retryConnect()) {
@@ -352,10 +387,9 @@
         while (waits.length) {
           wait = waits.shift();
           cb = wait.pop();
-          !isFunction(cb) || cb.requestError(e, false);
+          !isFunction(cb) || cb.requestError(e, FALSE);
         }
       } catch(e) {
-
       }
 
       ss.onerror.call(ss, e);
@@ -368,16 +402,12 @@
       if(so !== ss._conn) {
         msg = 'StableSocket detects not-primary socket message.';
         msg += 'This socket will be closed silently.';
-        return logger.log(msg), !so || so.close();
+        return logger.log(msg), logger.log(evt), !so || so.close();
       }
 
-      ss.onLine = true;
-      if(ss._silent_timer) {
-        return;
-      }
+      // Change to online mode when receiving a message.
+      online(), _clearSilentMode(ss);
 
-      //      console.log('[StableSocket] (' + ss._host + ') onMessage: ');
-      //      console.log(m);
       try {
 
         // Data analyzed by analyzer.
@@ -424,7 +454,7 @@
         // Get raw message. 
         // (Default: exparsable message, except "PING" and "PONG")
         ss.logger.error(e);
-        ss.onmessage(evt, false);
+        ss.onmessage(evt, FALSE);
 
       }
     }
@@ -441,22 +471,23 @@
       if(so !== pre_co) {
         switch(pre_co) {
 
-        case null:
-          msg += 'Detects reconnect.';
+        case NULL:
+          // On create new socket after closing old socket.
+          logger.log(msg + 'Detects reconnect.');
           break;
 
-        case true:
-          msg += 'Detects connecting socket error.';
+        case TRUE:
+          logger.log(msg + 'Detects connecting socket error.');
           break;
 
         default:
-          msg += 'Detects not-primary socket close.';
+          logger.log(msg + 'Detects not-primary socket close.');
 
         }
-        return logger.log(msg);
+        return;
       }
 
-      ss.onLine = false, ss._times['LastClose'] = new Date();
+      ss.onLine = FALSE, ss._times['LastClose'] = Date.now();
       msg += 'Connection is CLOSED. ';
 
       var ConnectURI = (conf || '').ConnectURI;
@@ -468,8 +499,7 @@
       }
 
       var _so = _connector[ConnectURI];
-      if(_so == null) return;
-
+      if(_so == NULL) return;
       if(_so.readyState != Socket.CLOSED) {
         try {
           logger.log('Unexpected readyState: ' + _so.readyState);
@@ -518,7 +548,7 @@
     var _waits = ss._waits, max_wait = opts.max_wait;
 
     var args = casting(arguments);
-    var callback = null, options = {}, _cb = args[args.length - 1];
+    var callback = NULL, options = {}, _cb = args[args.length - 1];
 
     var hasCb = isFunction(_cb);
     if(!hasCb) {
@@ -541,11 +571,11 @@
         // Now, always set "_cbOpcd" truly
         // for when has truly callback, timeout occurs 
         // if "_cbOpcd" is falsy.
-        _cbOpcd = true;
+        _cbOpcd = TRUE;
 
         // Set RETRY parameter for each request callback
         // with wrapping.
-        callback = _cb.RETRY != null ? _cb: function() {
+        callback = _cb.RETRY != NULL ? _cb: function() {
           _cb.apply(this, arguments);
         };
         args[args.length - 1] = callback;
@@ -564,7 +594,7 @@
     var rid = ++_rid & 0xffffff;
     if(callback) {
 
-      if(callback.RETRY == null) {
+      if(callback.RETRY == NULL) {
         callback.RETRY = options.retry || opts.retry;
       } else {
         callback.RETRY--;
@@ -580,7 +610,7 @@
 
     }
 
-    if(ss._conn == null) {
+    if(ss._conn == NULL) {
       if(!pushQueue(args, rid)) return;
       return ss.connect(rid);
     }
@@ -589,9 +619,6 @@
       pushQueue(args, rid);
       return;
     }
-
-    //    console.log('send.readyState: ' + ss._conn.readyState, args);
-    //    console.log(Socket.OPEN, Socket.CONNECTING, Socket.CLOSING, Socket.CLOSED);
 
     switch(ss.readyState()) {
     case Socket.OPEN:
@@ -611,17 +638,17 @@
 
     default:
       mes = 'Unexpected readyState: ' + ss._conn.readyState;
-      return requestError(mes, false);
+      return requestError(mes, FALSE);
 
     }
 
     function pushQueue(args, rid) {
       _reset(rid);
       if(_waits.length < max_wait) {
-        return _waits.push(args), true;
+        return _waits.push(args), TRUE;
       }
-      requestError('Too many wait more than ' + max_wait, false);
-      return false;
+      requestError('Too many wait more than ' + max_wait, FALSE);
+      return FALSE;
     }
 
     function stringMessage(mess) {
@@ -664,17 +691,16 @@
       var prtc = host.indexOf('https') === 0 ? 'https': 'http';
 
       headers['Content-Type'] = 'application/json';
+
       var options = {
         hostname: host.replace(prtc + '://', ''),
         path: url,
         method: 'POST',
         headers: headers
       };
-      
-      options.rejectUnauthorized = false;
-      if(opts.agent) options.agent = opts.agent;
 
-      //      console.log('MESSAGE!', mess, options);
+      options.rejectUnauthorized = FALSE;
+      if(opts.agent) options.agent = opts.agent;
 
       // DON'T SEND URL and HEADERS, and DON'T FORGET "REVERT"!!
       delete body.url, delete body.headers;
@@ -706,10 +732,10 @@
       var k, xhr = new XMLHttpRequest();
       var body = Array.isArray(mess) ? mess[1]: mess;
       var url = body.url, headers = body.headers || {};
-      xhr.open('POST', body.url, true);
+      xhr.open('POST', body.url, TRUE);
 
       headers['Content-Type'] = 'application/json';
-      xhr.withCredentials = true;
+      xhr.withCredentials = TRUE;
       for(k in headers) {
         xhr.setRequestHeader(k, headers[k]);
       }
@@ -737,6 +763,7 @@
       if(ok) {
 
         _reset(rid);
+        online();
         callback({
           ok: 1,
           message: xhr_t || xhr_x
@@ -744,9 +771,9 @@
 
         // Callback immediately occurs on "opcodeCallback" response.
         return;
-      }
 
-      requestError(xhr_t || xhr_x, false);
+      }
+      requestError(xhr_t || xhr_x, FALSE);
 
     }
 
@@ -758,11 +785,11 @@
       mes = '[StableSocket] request error occurs.'
       mes += '(' + (e ? e.message || e: 'timeout?') + ')';
 
-      logger.error(mes);
+      logger.log(mes);
       logger.error(ss._actors[ss._index]);
 
       e = new Error(mes);
-      if(callback.RETRY === false) return callback(e);
+      if(callback.RETRY === FALSE) return callback(e);
 
       if(ss.isConnecting()) {
         // One more retry => maybe queuing
@@ -786,7 +813,7 @@
         ss.close();
 
         // Set reconnect condition and re-open new socket.
-        ss.onLine = false, ss._conn = null, ss._index++;
+        ss.onLine = FALSE, ss._conn = NULL, ss._index++;
         ss.send.apply(ss, args);
         return;
 
@@ -804,15 +831,20 @@
     var so = ss._conn;
 
     try {
-      ss._conn = null;
+      ss.onLine = FALSE, ss._conn = NULL;
       !so || so.close();
-      logger.log('[StableSocket] close connection: ', ss);
+      logger.log('[StableSocket] close connection: ', ss._host);
     } catch(e) {
       logger.log('[StableSocket] close error.', e);
     }
 
   }
-
+  function pinger(intv) {
+    var ss = this;
+    setTimeout(function() {
+	    ss.send('PING');
+	  }, intv || 3 * 1000);
+	}
   function removeListeners(so, evts, evts_map) {
 
     var ss = this;
@@ -820,7 +852,7 @@
     evts_map = evts_map || so.EventHandler || {};
     evts = Array.isArray(evts) ? evts: Object.keys(evts_map);
 
-    switch(true) {
+    switch(TRUE) {
 
     case isFunction(so.removeEventListener):
       evts.forEach(function(evt_ty) {
@@ -838,13 +870,13 @@
 
     // always overwrite ' on ... ' for avoid illegal handling.
     evts.forEach(function(evt_ty) {
-      so['on' + evt_ty] = null;
+      so['on' + evt_ty] = NULL;
       delete evts_map[evt_ty];
     });
 
   }
 
-  function toSilentMode() {
+  function toSilentMode(lup_op) {
 
     var ss = this;
     if(ss._silent_timer) return;
@@ -853,33 +885,23 @@
     if(isFunction(term)) term = term();
     if(!is('number', term)) return;
 
-    // sign of mode change
+    // Sign of mode change
+    // Challenge to online intervally
     ss._silent_timer = setTimeout(function() {
       ss.toActiveMode();
     }, term);
 
-    // readyState change
-    if(ss.readyState()) {
-      ss.close();
-    }
-
   }
 
-  function toActiveMode() {
+  function toActiveMode(lup_op) {
 
     var ss = this;
-    if(!ss._silent_timer) {
-      return;
-    }
 
-    // sign of mode change
-    delete ss._silent_timer;
+    // Sign of mode change
+    _clearSilentMode(ss);
 
-    // parameter initialize
-    _initRetry(ss);
-    
-    // challenge reconnect immediately.
-    ss.connect();
+    // Challenge reconnect immediately.
+    ss.pinger(); // => try reconnect
 
   }
 
@@ -898,7 +920,7 @@
   /**
    * @private
    */
-  function startDNSInterval(opts) {
+  function startDNSInterval(logger, opts) {
 
     // Inherits StableSocket options
     opts = opts || {};
@@ -908,37 +930,42 @@
     var lup_timo = opts_lup.timeout || Default.Timeout.DNSLookup;
 
     var lookup = opts_lup.browsing || browsing ? nsBrowserLookup: nsNodeLookup;
-    var host = opts_lup.host || opts.host || (global.location || '').host
+    var host = opts_lup.host || opts.host || (g.location || '').host
       || Default.Host.DNSLookup;
 
+    var msg = '[StableSocket] Starting DNS lookup to:' + host;
+    msg += ' (interval:' + lup_intv + ', timeout:' + lup_timo + ')';
+    logger.log(msg);
+
+    // The first lookup timer
     IntervalTimer = setImmediate(lookup);
 
     function nsBrowserLookup() {
 
-      var xhr;
-      xhr = new XMLHttpRequest();
+      var xhr, ptcl;
+      setNgTimer();
 
+      xhr = new XMLHttpRequest();
       xhr.onreadystatechange = function() {
         if(xhr.readyState != xhr.DONE) return;
+        if(LookupTimer === FALSE) return;
         clearNgTimer();
         (parseInt(String(xhr.status).charAt(0)) < 4 ? ok: ng)();
       };
 
-      setNgTimer();
-
-      var ptcl = opts.protocol || (global.location || '').protocol;
-      xhr.open('GET', [ptcl, host].join('//'), true);
-      xhr.send(null);
+      ptcl = opts.protocol || (g.location || '').protocol;
+      xhr.open('GET', [ptcl, host].join('//'), TRUE);
+      xhr.send(NULL);
 
     }
     function nsNodeLookup() {
 
       setNgTimer();
 
-      DNS.lookup(host, { proxy: opts.proxy }, function(e, r) {
-        if(LookupTimer === false) {
-          return;
-        }
+      DNS.lookup(host, {
+        proxy: opts.proxy
+      }, function(e, r) {
+        if(LookupTimer === FALSE) return;
         clearNgTimer();
         e ? ng(): ok();
       });
@@ -953,17 +980,19 @@
     }
 
     function ok() {
-      Sockets.forEach(function(ss) {
-        ss.onLine = true, ss.toActiveMode();
-      });
-      LookupTimer = false;
+      // Be careful that DNS result is not always correct.
+      // logger.log('Lookup ok!');
+      if(LookupTimer == FALSE) return;
+      wakeup();
+      LookupTimer = FALSE;
       IntervalTimer = setTimeout(lookup, lup_intv);
     }
     function ng() {
-      Sockets.forEach(function(ss) {
-        ss.onLine = false, ss.toSilentMode();
-      });
-      LookupTimer = false;
+      // Be careful that DNS result is not always correct.
+      // logger.log('Lookup ng!');
+      if(LookupTimer == FALSE) return;
+      quiet();
+      LookupTimer = FALSE;
       IntervalTimer = setTimeout(lookup, lup_intv);
     }
 
@@ -972,8 +1001,24 @@
   /**
    * @private
    */
+	function _clearSilentMode(ss){
+
+	    // Initialize parameter 
+    _initRetry(ss);
+	
+	  var timer = ss._silent_timer;
+	  if(timer == NULL) return;
+
+	  clearTimeout(timer);
+	  ss._silent_timer = NULL;
+
+	}
+
+  /**
+   * @private
+   */
   function _initRetry(ss) {
-    ss._open_error = null, ss._open_retry = ss._open_retry0;
+    ss._open_error = NULL, ss._open_retry = ss._open_retry0;
     ss._open_retrya = [].concat(ss._open_retryi);
   }
 

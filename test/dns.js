@@ -4,21 +4,34 @@
 var path = require('path');
 var DNS = require(path.resolve('./lib/dns.js'));
 
-var intv = process.argv[2];
-var host = process.argv[3], proxy = process.argv[4]
+var i_ofs = 2;
+var l_ty = process.argv[i_ofs];
+var l_fn;
+switch(l_ty) {
+case 'bycp':
+  l_fn = 'lookupByCp';
+  i_ofs = 3;
+  break;
+default:
+  l_fn = 'lookup';
+}
+
+var intv = process.argv[0 + i_ofs];
+var host = process.argv[1 + i_ofs], proxy = process.argv[2 + i_ofs];
 console.log('[Stable Socket] DNS test starting with interval: ' + intv);
-console.log('  host:' + host + ', proxy:' + proxy);
+console.log('  type: ' + l_ty + ', host:' + host + ', proxy:' + proxy);
 
 setInterval(function() {
   var n = Date.now();
-  DNS.lookup(host, {
+  DNS[l_fn](host, {
     proxy: proxy
   }, function(e, r) {
 
     var rap = Date.now() - n;
+    consoel.log(' - ' + new Date().toGMTString());
     console.log('[Stable Socket] DNS test response: ' + rap + ' ms');
-    console.log('error:', e);
-    console.log('resut:', r);
+    console.log('error (' + (typeof e) + '):', e);
+    console.log('result(' + (typeof r) + '):', r);
 
   });
 }, intv);
