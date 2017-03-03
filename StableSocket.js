@@ -85,12 +85,13 @@
   // Necessary for DNS lookup
   var Sockets = [];
   var IntervalTimer = NULL, LookupTimer = NULL;
+  var ActiveSocketTime = Date.now();
 
   var wakeup = function() {
     Sockets.forEach(function(ss) {
 
       // DONNOT "toActivateMode" at status online.
-			var Socket = ss._Socket || {};
+      var Socket = ss._Socket || {};
       if(ss.onLine && ss.readyState() == Socket.OPEN) {
         return;
       }
@@ -135,8 +136,7 @@
     ss._times = {};
 
     var opts = ss.options = options || {};
-    opts.callback = opts.callback == null ? true: opts.callback;
-
+    opts.callback = opts.callback == NULL ? TRUE: opts.callback;
     opts.timeout = opts.timeout || Default.Timeout.Request;
     opts.retry = opts.retry || Default.Limit.RequestRetry;
     opts.max_wait = opts.max_wait || Default.Limit.MaxWait;
@@ -193,7 +193,7 @@
 
     send: send,
     close: close,
-		pinger: pinger,
+    pinger: pinger,
 
     // addListeners: addListeners,
     removeListeners: removeListeners,
@@ -242,7 +242,7 @@
 
     var so_opts = {};
     so_opts.rejectUnauthorized = FALSE;
-    if(opts.agent) so_opts.agent = opts.agent;
+    so_opts.agent = opts.agent || FALSE; // DON'T USE gloablAgent
 
     var so = new Socket(ConnectURI + (opts.query || ''), so_opts);
     ss._host = ConnectURI.split('/').slice(0, 3).join('/');
@@ -267,7 +267,7 @@
 
     function onOpen(evt) {
 
-      ss._times['LastOpen'] = Date.now();
+      ss._times['LastOpen'] = ActiveSocketTime = Date.now();
       online(), _clearSilentMode(ss);
 
       // Off opening event handler and opening error handler.
@@ -389,8 +389,7 @@
           cb = wait.pop();
           !isFunction(cb) || cb.requestError(e, FALSE);
         }
-      } catch(e) {
-      }
+      } catch(e) {}
 
       ss.onerror.call(ss, e);
       ss.toSilentMode();
@@ -400,12 +399,13 @@
     function onMessage(evt) {
 
       if(so !== ss._conn) {
-        msg = 'StableSocket detects not-primary socket message.';
-        msg += 'This socket will be closed silently.';
-        return logger.log(msg), logger.log(evt), !so || so.close();
+        msg = '[StableSocket] Detects not-primary socket message.';
+        msg += 'This socket will be closed silently. (' + evt + ')';
+        return logger.log(msg), !so || so.close();
       }
 
       // Change to online mode when receiving a message.
+      ActiveSocketTime = Date.now();
       online(), _clearSilentMode(ss);
 
       try {
@@ -584,6 +584,13 @@
 
     }
 
+    // FOR DEBUGGING LOG
+    // logger.log('[StableSocket] Method "send" is called with:');
+    // logger.log('  _conn        : ' + String(ss._conn));
+    // logger.log('  _silent_timer: ' + ss._silent_timer);
+    // logger.log('  isConnecting : ' + ss.isConnecting());
+    // logger.log('  readyState   : ' + ss.readyState());
+    
     // at the silent mode, "send" method immediately end.
     // in this case, all commands are disposed.
     if(ss._silent_timer) {
@@ -700,7 +707,7 @@
       };
 
       options.rejectUnauthorized = FALSE;
-      if(opts.agent) options.agent = opts.agent;
+      options.agent = opts.agent || FALSE; // DON'T USE gloablAgent
 
       // DON'T SEND URL and HEADERS, and DON'T FORGET "REVERT"!!
       delete body.url, delete body.headers;
@@ -833,18 +840,18 @@
     try {
       ss.onLine = FALSE, ss._conn = NULL;
       !so || so.close();
-      logger.log('[StableSocket] close connection: ', ss._host);
+      logger.log('[StableSocket] Close connection: ' + ss._host);
     } catch(e) {
-      logger.log('[StableSocket] close error.', e);
+      logger.log('[StableSocket] Close error. ' + (e || {}).message);
     }
 
   }
   function pinger(intv) {
-    var ss = this;
-    setTimeout(function() {
-	    ss.send('PING');
-	  }, intv || 3 * 1000);
-	}
+
+    var ss = this, ss_opts = ss.options;
+    if(isFunction(ss_opts.ping)) setTimeout(ss_opts.ping, intv || 1000);
+
+  }
   function removeListeners(so, evts, evts_map) {
 
     var ss = this;
@@ -885,8 +892,11 @@
     if(isFunction(term)) term = term();
     if(!is('number', term)) return;
 
+    // Buffer time before silent mode (ActiveSocketTime + 1 min)
+    if(Date.now() < ActiveSocketTime + 60 * 1000) return;
+    
     // Sign of mode change
-    // Challenge to online intervally
+    // Challenge to online with interval timer
     ss._silent_timer = setTimeout(function() {
       ss.toActiveMode();
     }, term);
@@ -963,11 +973,12 @@
       setNgTimer();
 
       DNS.lookup(host, {
-        proxy: opts.proxy
+        proxy: opts.proxy,
+        timeout: lup_timo
       }, function(e, r) {
         if(LookupTimer === FALSE) return;
         clearNgTimer();
-        e ? ng(): ok();
+        e ? ng(e): ok();
       });
 
     }
@@ -987,10 +998,11 @@
       LookupTimer = FALSE;
       IntervalTimer = setTimeout(lookup, lup_intv);
     }
-    function ng() {
+    function ng(e) {
       // Be careful that DNS result is not always correct.
       // logger.log('Lookup ng!');
       if(LookupTimer == FALSE) return;
+      logger.log(e);
       quiet();
       LookupTimer = FALSE;
       IntervalTimer = setTimeout(lookup, lup_intv);
@@ -1001,18 +1013,18 @@
   /**
    * @private
    */
-	function _clearSilentMode(ss){
+  function _clearSilentMode(ss) {
 
-	    // Initialize parameter 
+    // Initialize parameter 
     _initRetry(ss);
-	
-	  var timer = ss._silent_timer;
-	  if(timer == NULL) return;
 
-	  clearTimeout(timer);
-	  ss._silent_timer = NULL;
+    var timer = ss._silent_timer;
+    if(timer == NULL) return;
 
-	}
+    clearTimeout(timer);
+    ss._silent_timer = NULL;
+
+  }
 
   /**
    * @private
