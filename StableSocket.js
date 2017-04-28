@@ -1,4 +1,14 @@
-/***/
+/**
+ *
+ * StableSocket
+ *
+ * (c) Yoshitaka Sakamoto, East Cloud Inc., Startup Cloud Inc.
+ *  all right reserved.
+ * Synquery RSD - DEVELOP: # ,RELEASE: # 
+ * principal contributor: 
+ *    Yoshitaka Sakamoto <sakamoto@startup-cloud.co.jp>
+ *
+ **/
 // StableSocket
 (function(has_win, has_mod) {
 
@@ -19,11 +29,19 @@
   !has_mod || (module.exports = StableSocket);
 
   // extra exports
-  var DNS;
+  var DNS, setImmediate;
   if(typeof require == 'undefined') {
+
     DNS = g.DNS || Function();
+    setImmediate = g.setImmediate || function(fn) {
+      return setTimeout(fn, 4);
+    };
+
   } else {
+
     DNS = require(__dirname + '/lib/dns.js');
+    setImmediate = g.setImmediate;
+
   }
   StableSocket.DNS = DNS;
 
@@ -421,29 +439,54 @@
 
         // Callback with 1st argument treat as "SUCCESSFULLY" 
         // for the function(data, callback){ ... } type.
-        var rep, rep_k, rep_v, ini_v;
+        var rep, pos, rd;
         if(isFunction(cb)) {
+          if(isArray(data)) {
 
-          rep = cb.reply || [];
-          rep_k = rep[0], ini_v = rep[1];
-          switch(rep_k) {
+            // { val_i: 1, err_i: 2, pos_i: 0, ini_v: undefined }
+            rd = [];
+            rep = cb.reply || {};
+            pos = rep.pos_i || 0;
 
-          case 'head':
-            rep_v = data[0];
-            break;
+            var setOkInit = function() {
+              rd[2] = 'ok';
+              if(rd[pos] || is('undefined', rep.ini_v)) {
+                return;
+              }
+              rd[pos] = rep.ini_v;
+            };
 
-          case 'body':
-            rep_v = data[1];
-            break;
+            // Detect error
+            if(rep.err_i != NULL) {
+              rd[0] = data[rep.err_i];
+            }
 
-          case 'data':
-          default:
-            rep_v = data;
+            // Detect reply value
+            switch(TRUE) {
 
+            case rd[0] != NULL:
+              rd[2] = 'ng';
+              break;
+
+            case is('number', rep.val_i):
+              rd[pos] = data[rep.val_i];
+              setOkInit();
+              break;
+
+            default:
+              rd[pos] = data;
+              setOkInit();
+
+            } // <-- switch(TRUE) { ... } <--
+
+            // <-- when <Array> reply <--
+          } else {
+            rd = [data, NULL, 'ok'];
+
+            // <-- when <Non-Array> reply <--
           }
-          rep_v || typeof ini_v == 'undefined' || (rep_v = ini_v);
-          cb(rep_v), _reset(rid);
-
+          cb(rd[0], rd[1], rd[2]);
+          _reset(rid);
         } // <-- if(isFunction(cb)) { ... } <--
 
         // Get raw message.
@@ -590,7 +633,7 @@
     // logger.log('  _silent_timer: ' + ss._silent_timer);
     // logger.log('  isConnecting : ' + ss.isConnecting());
     // logger.log('  readyState   : ' + ss.readyState());
-    
+
     // at the silent mode, "send" method immediately end.
     // in this case, all commands are disposed.
     if(ss._silent_timer) {
@@ -608,7 +651,12 @@
       }
 
       // fix the callback return value ([ [data|body|head], falsy value ])
-      callback.reply = options.reply || opts.reply || ['body'];
+      callback.reply = options.reply || opts.reply || {
+        val_i: 1, // where the value exists in reply message from socket
+        err_i: 2, // where the error exists in reply message from socket
+        pos_i: 0, // index to set value for callback reply (now, error always set to 0)
+      // ini_v: undefined
+      };
       callback.requestError = requestError;
 
       // register the callback
@@ -894,7 +942,7 @@
 
     // Buffer time before silent mode (ActiveSocketTime + 1 min)
     if(Date.now() < ActiveSocketTime + 60 * 1000) return;
-    
+
     // Sign of mode change
     // Challenge to online with interval timer
     ss._silent_timer = setTimeout(function() {
@@ -1050,6 +1098,9 @@
   }
   function isFunction(x) {
     return typeof x == 'function';
+  }
+  function isArray(x) {
+    return Array.isArray(x);
   }
 
 })(typeof window != 'undefined', typeof module != 'undefined');
