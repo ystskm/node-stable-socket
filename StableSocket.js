@@ -587,7 +587,7 @@
   function send() {
 
     var ss = this, Socket = ss._Socket;
-    var mes, logger = ss.logger, opts = ss.options;
+    var msg, logger = ss.logger, opts = ss.options;
     var _waits = ss._waits, max_wait = opts.max_wait;
 
     var args = casting(arguments);
@@ -666,8 +666,9 @@
     }
 
     if(ss._conn == NULL) {
-      if(!pushQueue(args, rid)) return;
-      return ss.connect(rid);
+      pushQueue(args, rid);
+      ss.connect(rid); // reconnect even if the queuing was failed.
+      return;
     }
 
     if(ss.isConnecting()) {
@@ -675,7 +676,8 @@
       return;
     }
 
-    switch(ss.readyState()) {
+    var rs = ss.readyState();
+    switch(rs) {
     case Socket.OPEN:
       return write();
 
@@ -692,8 +694,8 @@
       return ss._index++, ss.connect(rid);
 
     default:
-      mes = 'Unexpected readyState: ' + ss._conn.readyState;
-      return requestError(mes, FALSE);
+      msg = 'Unexpected readyState: ' + rs;
+      return requestError(msg, FALSE);
 
     }
 
@@ -702,7 +704,9 @@
       if(_waits.length < max_wait) {
         return _waits.push(args), TRUE;
       }
-      requestError('Too many wait more than ' + max_wait, FALSE);
+      msg = 'Too many wait more than ' + max_wait;
+      msg += ', readyState: ' + ss.readyState();
+      requestError(msg, FALSE);
       return FALSE;
     }
 
@@ -837,13 +841,14 @@
       var callback = _callbacks[rid] || Function();
       _reset(rid);
 
-      mes = '[StableSocket] request error occurs.'
-      mes += '(' + (e ? e.message || e: 'timeout?') + ')';
+      msg = '[StableSocket] request error occurs.'
+      msg += ' (' + (e ? e.message || e: 'timeout?');
+      msg += ', readyState: ' + ss.readyState() + ')';
 
-      logger.log(mes);
+      logger.log(msg);
       logger.error(ss._actors[ss._index]);
 
-      e = new Error(mes);
+      e = new Error(msg);
       if(callback.RETRY === FALSE) return callback(e);
 
       if(ss.isConnecting()) {
