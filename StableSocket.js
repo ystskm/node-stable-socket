@@ -4,7 +4,7 @@
  *
  * (c) Yoshitaka Sakamoto, East Cloud Inc., Startup Cloud Inc.
  *  all right reserved.
- * Synquery RSD - DEVELOP: # ,RELEASE: # 
+ * Synquery RSD - DEVELOP: #Sav8kEvx ,RELEASE: # 
  * principal contributor: 
  *    Yoshitaka Sakamoto <sakamoto@startup-cloud.co.jp>
  *
@@ -205,6 +205,7 @@
 
     connect: connect,
     isConnecting: isConnecting,
+    connectingTime: connectingTime,
 
     readyState: readyState,
     status: status,
@@ -264,12 +265,14 @@
 
     var so = new Socket(ConnectURI + (opts.query || ''), so_opts);
     ss._host = ConnectURI.split('/').slice(0, 3).join('/');
-    ss._conn = TRUE; // On connecting sign
+    ss._conn = TRUE;
+    ss._conn_stamp = Date.now(); // On connecting sign
 
     var evts_map = so.EventHandler = {
       open: onOpen,
       data: onMessage,
       message: onMessage,
+      error: onOpeningError,
       close: onClose
     };
 
@@ -285,6 +288,7 @@
 
     function onOpen(evt) {
 
+      ss._conn_stamp = NULL;
       ss._times['LastOpen'] = ActiveSocketTime = Date.now();
       online(), _clearSilentMode(ss);
 
@@ -328,6 +332,7 @@
     function onOpeningError(e, keep) {
 
       // Off opening error.
+      ss._conn_stamp = NULL;
       onOpeningError = Function();
       ss.removeListeners(so);
 
@@ -563,7 +568,14 @@
    * 
    */
   function isConnecting() {
-    return this._conn === true;
+    return this._conn === TRUE;
+  }
+
+  /**
+   * 
+   */
+  function connectingTime() {
+    return this._conn_stamp ? Date.now() - this._conn_stamp: NULL;
   }
 
   /**
@@ -626,7 +638,23 @@
       }
 
     }
+    var closeProc = function(ty) {
+      
+      var cb = callback || {};
+      // Open, but not reachable for the network reason.
+      // Then, force reconnect.
+      logger.log('[StableSocket] request error occurs. (readyState: '
+        + ss.readyState() + ', ' + ty + ', retry remains: ' + cb.RETRY) + ')';
 
+      // Don't forget remove listeners and close socket.
+      // Old socket no longer be used.
+      ss.removeListeners(ss._conn);
+      ss.close();
+
+      // Set reconnect condition and re-open new socket.
+      ss.onLine = FALSE, ss._conn = NULL, ss._index++;
+      
+    };
     // FOR DEBUGGING LOG
     // logger.log('[StableSocket] Method "send" is called with:');
     // logger.log('  _conn        : ' + String(ss._conn));
@@ -634,10 +662,16 @@
     // logger.log('  isConnecting : ' + ss.isConnecting());
     // logger.log('  readyState   : ' + ss.readyState());
 
-    // at the silent mode, "send" method immediately end.
+    // At the silent mode, "send" method immediately end.
     // in this case, all commands are disposed.
     if(ss._silent_timer) {
       return (callback || Function)();
+    }
+    
+    // When the connecting time is TOO LONG, may in some network-suspicious
+    // illegal state.
+    if(ss.isConnecting() && ss.connectingTime() > opts.timeout) {
+      closeProc('SEND');
     }
 
     // request identifier
@@ -706,6 +740,7 @@
       }
       msg = 'Too many wait more than ' + max_wait;
       msg += ', readyState: ' + ss.readyState();
+      msg += ', connecting: ' + ss.isConnecting();
       requestError(msg, FALSE);
       return FALSE;
     }
@@ -843,15 +878,15 @@
 
       msg = '[StableSocket] request error occurs.'
       msg += ' (' + (e ? e.message || e: 'timeout?');
-      msg += ', readyState: ' + ss.readyState() + ')';
+      msg += ', readyState: ' + ss.readyState();
+      msg += ', connecting: ' + ss.isConnecting() + ')';
 
       logger.log(msg);
       logger.error(ss._actors[ss._index]);
 
       e = new Error(msg);
-      if(callback.RETRY === FALSE) return callback(e);
 
-      if(ss.isConnecting()) {
+      if(ss.isConnecting() && ss.connectingTime() <= opts.timeout) {
         // One more retry => maybe queuing
         setTimeout(function() {
           ss.send.apply(ss, args);
@@ -859,27 +894,19 @@
         return;
       }
 
-      var so = ss._conn;
-      if(callback.RETRY > 0) {
+      // Socket condition may TOO BAD!!!
+      if(callback.RETRY !== FALSE && callback.RETRY > 0) {
 
-        // Open, but not reachable for the network reason.
-        // Then, force reconnect.
-        logger.log('[StableSocket] request error occurs. readyState: '
-          + ss.readyState() + ', retry remains: ' + callback.RETRY);
-
-        // Don't forget remove listeners and close socket.
-        // Old socket no longer be used.
-        ss.removeListeners(so);
-        ss.close();
-
-        // Set reconnect condition and re-open new socket.
-        ss.onLine = FALSE, ss._conn = NULL, ss._index++;
+        closeProc('RETRY:' + callback.RETRY);
         ss.send.apply(ss, args);
-        return;
 
+      } else {
+        
+        closeProc('RETRY:' + callback.RETRY);
+        callback(e);
+        
       }
-
-      callback(e);
+      return;
 
     }
 
@@ -889,7 +916,6 @@
 
     var ss = this, logger = ss.logger;
     var so = ss._conn;
-
     try {
       ss.onLine = FALSE, ss._conn = NULL;
       !so || so.close();
