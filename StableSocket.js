@@ -272,7 +272,9 @@
       open: onOpen,
       data: onMessage,
       message: onMessage,
-      error: onOpeningError,
+      error: function(e) { 
+        onOpeningError(e); // For care duplicated "onOpeningError" call.
+      },
       close: onClose
     };
 
@@ -360,7 +362,8 @@
       }
 
       msg = 'StableSocket Connection is ERRORED. ';
-      logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length);
+      logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length 
+        + ', readyState: ' + ss.readyState());
       console.error(e);
 
       var retryConnect = function() {
@@ -375,7 +378,7 @@
           ss.connect(rid);
 
         }, ss._open_retrya[0]);
-        return true;
+        return TRUE;
 
       };
 
