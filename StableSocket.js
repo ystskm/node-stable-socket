@@ -608,8 +608,13 @@
     var args = casting(arguments);
     var callback = NULL, options = {}, _cb = args[args.length - 1];
 
+    // Setup timeout checker if callback is given
     var hasCb = isFunction(_cb);
-    if(!hasCb) {
+    
+    // PING, PONG and any signal message => DISABLE callback preferences
+    var is_sig = is('string', args[0]) && !hasCb;
+    
+    if(!is_sig && !hasCb) {
       args.push(_cb = Function());
     }
     if(args.length >= 3) {
@@ -679,7 +684,7 @@
 
     // request identifier
     var rid = ++_rid & 0xffffff;
-    if(callback) {
+    if(!is_sig && callback) {
 
       if(callback.RETRY == NULL) {
         callback.RETRY = options.retry || opts.retry;
@@ -757,8 +762,9 @@
       var conv = (opts.converter || Converter);
       var rurl, mess;
 
-      if(is('string', args[0]) && args[1] == callback) {
+      if(is_sig) {
         // send single raw string
+        // e.g. PING, PONG and any signal message
         mess = args[0];
       } else {
         // Multiple arguments
