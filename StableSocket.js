@@ -91,8 +91,11 @@
 
   // Receiving Data
   var Analyzer = function(msg) {
-    if(msg == 'PING') return msg;
-    if(msg == 'PONG') return msg;
+    switch(msg) {
+    case 'PING':
+    case 'PONG':
+      return msg;
+    }
     return JSON.parse(msg);
   };
 
@@ -171,13 +174,28 @@
     ss._silent_timer = NULL;
 
     // logger with care for non-enough object
-    ss.logger = opts.logger ? opts.logger: Function();
-    ['log', 'error'].forEach(function(k) {
-
-      isFunction(ss.logger[k]) || (ss.logger[k] = function() {
-        if(ss.stdout() === FALSE) return;
+    if(isFunction(opts.logger)) {
+      ss.logger = {
+        log: opts.logger,
+        debug: opts.logger,
+        info: opts.logger,
+        warn: opts.logger,
+        error: opts.logger,
+      };
+    } else {
+      ss.logger = ss.logger || {};
+    }
+    ['log', 'debug', 'info', 'warn', 'error'].forEach(function(k) {
+      
+      if(isFunction(ss.logger[k])) {
+        return;
+      }
+      ss.logger[k] = function() {
+        if(ss.stdout() === FALSE) {
+          return; 
+        } // => Logging is disabled
         g.console.log.apply(g.console, arguments);
-      });
+      };
 
     });
 
@@ -242,8 +260,9 @@
     var _waits = ss._waits;
 
     var conf = ss._actors[ss._index];
-    conf || (conf = ss._actors[ss._index = 0]);
-
+    if(conf == NULL) {
+      conf = ss._actors[ss._index = 0];
+    }
     if(conf == NULL) {
       onOpeningError(new Error('Actor for connect is not found.'));
       logger.error('Check your configuration!');
@@ -362,8 +381,7 @@
       }
 
       msg = 'StableSocket Connection is ERRORED. ';
-      logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length 
-        + ', readyState: ' + ss.readyState());
+      logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length + ', readyState: ' + ss.readyState());
       console.error(e);
 
       var retryConnect = function() {
@@ -434,76 +452,97 @@
       ActiveSocketTime = Date.now();
       online(), _clearSilentMode(ss);
 
+      var h, b, rid;
+      var cb;
       try {
 
         // Data analyzed by analyzer.
         // "WebSocket" => raw message, "EventSource" => wrapped event object
         var raw = ss._host.indexOf('ws') == 0 ? evt: evt.data;
-        var data = (opts.analyzer || Analyzer)(raw) || '';
+        var data;
+        switch(TRUE) {
+        
+        case isFunction(opts.analyzer):
+          data = opts.analyzer(raw);
+          break;
+          
+        case opts.analyzer === FALSE:
+          data = raw;
+          break;
+          
+        default:
+          data = Analyzer(raw);
+        
+        }
 
-        // and callback if exist.
-        var h = data[0] || '', b = data[1], rid = h.rid;
-        var cb = _callbacks[rid];
+        // And callback if exist.
+        if(isArray(data)) {
+          h = data[0] || {}, b = data[1], rid = h.rid;
+          cb = _callbacks[rid];
+        }
 
         // Callback with 1st argument treat as "SUCCESSFULLY" 
         // for the function(data, callback){ ... } type.
         var rep, pos, rd;
         if(isFunction(cb)) {
-          if(isArray(data)) {
+          
+          rd = [];
+          rep = cb.reply || {}; // (Default) { val_i: 1, err_i: 2, pos_i: 0, ini_v: undefined }
+          pos = rep.pos_i || 0;
 
-            // { val_i: 1, err_i: 2, pos_i: 0, ini_v: undefined }
-            rd = [];
-            rep = cb.reply || {};
-            pos = rep.pos_i || 0;
-
-            var setOkInit = function() {
-              rd[2] = 'ok';
-              if(rd[pos] || is('undefined', rep.ini_v)) {
-                return;
-              }
-              rd[pos] = rep.ini_v;
-            };
-
-            // Detect error
-            if(rep.err_i != NULL) {
-              rd[0] = data[rep.err_i];
+          var setOkInit = function() {
+            rd[2] = 'ok';
+            if(rd[pos] || is('undefined', rep.ini_v)) {
+              return;
             }
+            rd[pos] = rep.ini_v;
+          };
 
-            // Detect reply value
-            switch(TRUE) {
-
-            case rd[0] != NULL:
-              rd[2] = 'ng';
-              break;
-
-            case is('number', rep.val_i):
-              rd[pos] = data[rep.val_i];
-              setOkInit();
-              break;
-
-            default:
-              rd[pos] = data;
-              setOkInit();
-
-            } // <-- switch(TRUE) { ... } <--
-
-            // <-- when <Array> reply <--
-          } else {
-            rd = [data, NULL, 'ok'];
-
-            // <-- when <Non-Array> reply <--
+          // Detect error
+          if(rep.err_i != NULL) {
+            rd[0] = data[rep.err_i];
           }
+
+          // Detect reply value
+          switch(TRUE) {
+
+          case rd[0] != NULL:
+            rd[2] = 'ng';
+            break;
+
+          case is('number', rep.val_i):
+            rd[pos] = data[rep.val_i];
+            setOkInit();
+            break;
+
+          default:
+            rd[pos] = data;
+            setOkInit();
+
+          } // <-- switch(TRUE) { ... } <--
+          
+          // Execute callback!
           cb(rd[0], rd[1], rd[2]);
-          _reset(rid);
+          
         } // <-- if(isFunction(cb)) { ... } <--
+        
+        // Cleanup request memories
+        if(rid) {
+          _reset(rid);
+        }
 
         // Get raw message.
         ss.onmessage(evt, data);
 
       } catch(e) {
 
+        // Cleanup request memories
+        if(rid) {
+          _reset(rid);
+        }
+        
         // Get raw message. 
-        // (Default: exparsable message, except "PING" and "PONG")
+        // (Default: ex-parsable message, except "PING" and "PONG")
         ss.logger.error(e);
         ss.onmessage(evt, FALSE);
 
@@ -885,7 +924,7 @@
       var callback = _callbacks[rid] || Function();
       _reset(rid);
 
-      msg = '[StableSocket] request error occurs.'
+      msg = '[StableSocket] request error (type:' + (e ? e.type: 'unknown') + ') occurs.'
       msg += ' (' + (e ? e.message || e: 'timeout?');
       msg += ', readyState: ' + ss.readyState();
       msg += ', connecting: ' + ss.isConnecting() + ')';
