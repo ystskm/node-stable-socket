@@ -9,7 +9,7 @@
   "contributors": [],
   "description": "Auto reconnect, multiple boundary socket connector.",
   "dependencies": {
-    "https-proxy-agent": "1.0.0"
+    "https-proxy-agent": "~>2.2.0"
   },
   "devDependencies": {
     "websockets":"*",
