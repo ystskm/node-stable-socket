@@ -183,7 +183,7 @@
         error: opts.logger,
       };
     } else {
-      ss.logger = ss.logger || {};
+      ss.logger = opts.logger || {};
     }
     ['log', 'debug', 'info', 'warn', 'error'].forEach(function(k) {
       
@@ -271,7 +271,7 @@
     }
 
     var ConnectURI = conf.ConnectURI;
-    if(_connector[ConnectURI] != NULL) {
+    if(_connector[ ConnectURI ] != NULL) {
       // reconnecting warning
       logger.log('[StableSocket] ' + new Date().toGMTString() + ' - ');
       logger.log('  Overwrite connector before close for: ' + ConnectURI);
@@ -310,40 +310,38 @@
     function onOpen(evt) {
 
       ss._conn_stamp = NULL;
-      ss._times['LastOpen'] = ActiveSocketTime = Date.now();
+      ss._times.LastOpen = ActiveSocketTime = Date.now();
       online(), _clearSilentMode(ss);
 
       // Off opening event handler and opening error handler.
       onOpeningError = Function();
-      ss.removeListeners(so, ['open']);
+      ss.removeListeners(so, [ 'open' ]);
 
-      // when open socket, assign as his own socket.
-      // (by readyState judge, occasionally not better.)
-      var rs = ss.readyState();
+      // When open socket, ALWAYS assign as his own socket.
+      // (for why the readyState judge, occasionally not better.)
+      var rs = ss.readyState(), curr_so = ss._conn;
       if(rs != Socket.OPEN) {
-
         msg = 'StableSocket Connection is OPEN. \n';
-        ss.onopen.call(ss, _connector[ConnectURI] = ss._conn = so);
-
       } else {
 
         msg = 'StableSocket Connection is ALREADY OPEN. \n';
-        msg += 'Use another socket readyState:' + rs;
-        msg += ', silently close the open socket. \n';
-        ss.close();
+        msg += 'Current socket readyState:' + rs;
+        msg += ', silently close the current socket. \n';
+        
+        ss._conn = NULL; // For onClose event
+        try { curr_so == NULL || curr_so == TRUE || curr_so.close(); } catch(e) { }
 
       }
 
+      ss.onopen.call(ss, _connector[ ConnectURI ] = ss._conn = so);
       logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length);
       _reset(rid);
 
-      var waits = _waits;
-      ss._waits = [];
+      // laundering waits box
+      var waits = _waits; ss._waits = [ ];
 
       // re-send the waiting requests
-      while (waits.length) {
-        ss.send.apply(ss, waits.shift());
-      }
+      while (waits.length) { ss.send.apply(ss, waits.shift()); }
 
       // refresh open error status
       _initRetry(ss);
@@ -557,6 +555,7 @@
       ss.removeListeners(so);
       msg = '[StableSocket.onClose] ';
 
+      // "so" always an instance of Socket.
       var pre_co = ss._conn;
       if(so !== pre_co) {
         switch(pre_co) {
@@ -577,18 +576,18 @@
         return;
       }
 
-      ss.onLine = FALSE, ss._times['LastClose'] = Date.now();
+      ss.onLine = FALSE, ss._times.LastClose = Date.now();
       msg += 'Connection is CLOSED. ';
 
       var ConnectURI = (conf || '').ConnectURI;
       logger.log(msg + '(' + ConnectURI + ')');
 
       // If arbitrary close is detected, emit event "ondenied"
-      if(ss._times['LastClose'] - ss._times['LastOpen'] < opts.delay_as_denied) {
+      if(ss._times.LastClose - ss._times.LastOpen < opts.delay_as_denied) {
         ss.ondenied.call(ss, ConnectURI);
       }
 
-      var _so = _connector[ConnectURI];
+      var _so = _connector[ ConnectURI ];
       if(_so == NULL) return;
       if(_so.readyState != Socket.CLOSED) {
         try {
@@ -599,7 +598,7 @@
         }
       }
 
-      delete _connector[ConnectURI];
+      delete _connector[ ConnectURI ];
       ss.onclose.call(ss);
 
     }
