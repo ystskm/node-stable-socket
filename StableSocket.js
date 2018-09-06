@@ -283,10 +283,10 @@
     so_opts.agent = opts.agent || FALSE; // DON'T USE gloablAgent
 
     var so = new Socket(ConnectURI + (opts.query || ''), so_opts);
+    var so_stamp = ss._conn_stamp = Date.now(); // On connecting sign
     ss._host = ConnectURI.split('/').slice(0, 3).join('/');
     ss._conn = TRUE;
-    ss._conn_stamp = Date.now(); // On connecting sign
-
+    
     var evts_map = so.EventHandler = {
       open: onOpen,
       data: onMessage,
@@ -350,6 +350,11 @@
 
     function onOpeningError(e, keep) {
 
+      var isPrimaryOpen = so_stamp == ss._conn_stamp;
+      if(isPrimaryOpen) {
+        ss._conn = NULL;
+      }
+      
       // Off opening error.
       ss._conn_stamp = NULL;
       onOpeningError = Function();
@@ -379,18 +384,24 @@
       }
 
       msg = 'StableSocket Connection is ERRORED. ';
-      logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length + ', readyState: ' + ss.readyState());
+      logger.log(msg + '(' + ConnectURI + ') waiting: ' + _waits.length + ', readyState: ' + ss.readyState() + ', isPrimaryOpen: ' + isPrimaryOpen);
       console.error(e);
+      
+      // If not primary process, wait another event
+      if(!isPrimaryOpen) {
+        return;
+      }
 
       var retryConnect = function() {
 
         logger.log('retryConnect remains: ', ss._open_retry, ss._open_retrya);
 
         var intv = ss._open_retrya[0];
-        if(!is('number', intv)) return FALSE;
+        if(!is('number', intv)) { 
+          return FALSE; 
+        }
         setTimeout(function() {
 
-          if(ss.isConnecting()) ss._conn = NULL;
           ss.connect(rid);
 
         }, ss._open_retrya[0]);
