@@ -796,8 +796,6 @@
         return _waits.push(args), TRUE;
       }
       msg = 'Too many wait more than ' + max_wait;
-      msg += ', readyState: ' + ss.readyState();
-      msg += ', connecting: ' + ss.isConnecting();
       requestError(msg, FALSE);
       return FALSE;
     }
@@ -941,29 +939,32 @@
 
       logger.log(msg);
       logger.error(ss._actors[ss._index]);
-
+      
       e = new Error(msg);
-
-      if(ss.isConnecting() && ss.connectingTime() <= opts.timeout) {
-        // One more retry => maybe queuing
-        setTimeout(function() {
-          ss.send.apply(ss, args);
-        }, 80);
-        return;
+      if(retry !== FALSE) {
+        
+        if(ss.isConnecting() && ss.connectingTime() <= opts.timeout) {
+          // One more retry => maybe queuing
+          setTimeout(function() {
+            ss.send.apply(ss, args);
+          }, 80 + parseInt( 3600 * Math.random() ));
+          return;
+        }
+        
+        // Socket condition may TOO BAD!!!
+        if(callback.RETRY !== FALSE && callback.RETRY > 0) {
+          closeProc('RETRY:' + callback.RETRY);
+          setTimeout(function() {
+            ss.send.apply(ss, args);
+          }, 80 + parseInt( 3600 * Math.random() ));
+          return;
+        }
+        
       }
 
-      // Socket condition may TOO BAD!!!
-      if(callback.RETRY !== FALSE && callback.RETRY > 0) {
-
-        closeProc('RETRY:' + callback.RETRY);
-        ss.send.apply(ss, args);
-
-      } else {
-        
-        closeProc('RETRY:' + callback.RETRY);
-        callback(e);
-        
-      }
+      // Socket condition may TOO BAD!!! + NO RETRY!!!
+      closeProc('RETRY:' + callback.RETRY);
+      callback(e);
       return;
 
     }
@@ -1014,8 +1015,7 @@
 
     // always overwrite ' on ... ' for avoid illegal handling.
     evts.forEach(function(evt_ty) {
-      so['on' + evt_ty] = NULL;
-      delete evts_map[evt_ty];
+      so['on' + evt_ty] = NULL; delete evts_map[evt_ty];
     });
 
   }
@@ -1034,9 +1034,7 @@
 
     // Sign of mode change
     // Challenge to online with interval timer
-    ss._silent_timer = setTimeout(function() {
-      ss.toActiveMode();
-    }, term);
+    ss._silent_timer = setTimeout(function() { ss.toActiveMode(); }, term);
 
   }
 
