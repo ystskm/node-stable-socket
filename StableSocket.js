@@ -703,6 +703,21 @@
       logger.log('[StableSocket] request error occurs. (readyState: '
         + ss.readyState() + ', ' + ty + ', retry remains: ' + cb.RETRY) + ')';
 
+      var waits, w_ar, w_cb;
+      if(ty == 'BAD SOCKET CONDITION') {
+        // All waiting response is disposed like as silent mode.
+        // Current process callback will closed after closeProc, then DONNOT THROW ERROR!
+        waits = ss._waits || [ ];
+        while(waits.length) {
+          try {
+            w_ar = waits.shift();
+            if( !isArray(w_ar) ) continue;
+            if( isFunction(w_cb = w_ar[w_ar.length - 1]) ) { w_cb(ty); }
+          } catch(e) { ss.logger.error(e); }
+        }
+        ss._waits = [ ];
+      }
+      
       // Don't forget remove listeners and close socket.
       // Old socket no longer be used.
       ss.removeListeners(ss._conn);
@@ -963,7 +978,7 @@
       }
 
       // Socket condition may TOO BAD!!! + NO RETRY!!!
-      closeProc('RETRY:' + callback.RETRY);
+      closeProc('BAD SOCKET CONDITION');
       callback(e);
       return;
 
