@@ -48,7 +48,7 @@
   /**
    * 
    */
-  var DNS_URL = 'https://raw.githubusercontent.com/ystskm/stable-socket-js/master/LICENSE';
+  var DNS_OK, DNS_URL = 'https://raw.githubusercontent.com/ystskm/stable-socket-js/master/LICENSE';
   var Default = {
 
     Host: {
@@ -109,6 +109,7 @@
   var ActiveSocketTime = Date.now();
 
   var wakeup = function() {
+    DNS_OK = TRUE;
     Sockets.forEach(function(ss) {
 
       // DONNOT "toActivateMode" at status online.
@@ -122,8 +123,8 @@
 
     });
   };
-
   var quiet = function() {
+    DNS_OK = FALSE;
     Sockets.forEach(function(ss) {
 
       ss.onLine = FALSE;
@@ -136,6 +137,13 @@
     Sockets.forEach(function(ss) {
 
       ss.onLine = TRUE;
+
+    });
+  };
+  var offline = function() {
+    Sockets.forEach(function(ss) {
+
+      ss.onLine = FALSE;
 
     });
   };
@@ -287,6 +295,7 @@
     ss._host = ConnectURI.split('/').slice(0, 3).join('/');
     ss._conn = TRUE;
     
+    var notPrimaryTime = 0;
     var evts_map = so.EventHandler = {
       open: onOpen,
       data: onMessage,
@@ -564,7 +573,10 @@
 
       // Should always remove all listeners.
       ss.removeListeners(so);
-      msg = '[StableSocket.onClose] ';
+      msg = '[StableSocket.onClose](DNS=' + DNS_OK + ') ';
+
+      // Get ConnectURI
+      var ConnectURI = (conf || '').ConnectURI;
 
       // "so" always an instance of Socket.
       var pre_co = ss._conn;
@@ -584,13 +596,14 @@
           logger.log(msg + 'Detects not-primary socket close.');
 
         }
+        if(pre_co == NULL || !DNS_OK) { return; }
+        // It's NOT good condition, so that, emit event "ondenied"
+        ss.ondenied.call(ss, ConnectURI);
         return;
       }
 
       ss.onLine = FALSE, ss._times.LastClose = Date.now();
       msg += 'Connection is CLOSED. ';
-
-      var ConnectURI = (conf || '').ConnectURI;
       logger.log(msg + '(' + ConnectURI + ')');
 
       // If arbitrary close is detected, emit event "ondenied"
@@ -784,6 +797,7 @@
 
     var rs = ss.readyState();
     switch(rs) {
+    
     case Socket.OPEN:
       return write();
 
@@ -949,8 +963,7 @@
 
       msg = '[StableSocket] request error (type:' + (e ? e.type: 'unknown') + ') occurs.'
       msg += ' (' + (e ? e.message || e: 'timeout?');
-      msg += ', readyState: ' + ss.readyState();
-      msg += ', connecting: ' + ss.isConnecting() + ')';
+      msg += ', readyState: ' + ss.readyState() + ', connecting: ' + ss.isConnecting() + ', connectingTime: ' + ss.connectingTime() + ')';
 
       logger.log(msg);
       logger.error(ss._actors[ss._index]);
